@@ -1,8 +1,8 @@
 {
   "crons": [
-    { "path": "/api/cron/scan-payments", "schedule": "*/1 * * * *" },
-    { "path": "/api/cron/expire-access", "schedule": "*/1 * * * *" },
-    { "path": "/api/cron/payout-queue", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/sweep", "schedule": "*/10 * * * *" }
+    { "path": "/api/cron/scan-payments", "schedule": "0 */2 * * *" },
+    { "path": "/api/cron/expire-access", "schedule": "0 */2 * * *" },
+    { "path": "/api/cron/payout-queue", "schedule": "0 */6 * * *" },
+    { "path": "/api/cron/sweep", "schedule": "0 */12 * * *" }
   ]
 }
