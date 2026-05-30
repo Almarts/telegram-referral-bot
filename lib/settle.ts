@@ -54,7 +54,7 @@ export async function settleIfPaid(invoiceId: string): Promise<SettleResult> {
   const invoice = await db
     .select()
     .from(invoices)
-    .where(and(eq(invoices.id, invoiceId), eq(invoices.status, "pending")))
+    .where(and(eq(invoices.id, invoiceId), eq(invoices.status, "open")))
     .limit(1)
     .then((rows) => rows[0] ?? null);
 

@@ -21,7 +21,7 @@ export async function GET(req: Request): Promise<Response> {
       .from(invoices)
       .where(
         and(
-          eq(invoices.status, "pending"),
+          eq(invoices.status, "open"),
           gt(invoices.expiresAt, sql`now() - interval '24 hours'`),
         ),
       )

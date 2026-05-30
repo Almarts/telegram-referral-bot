@@ -91,7 +91,7 @@ export async function createInvoice(params: CreateInvoiceParams): Promise<Invoic
       depositAddress: address,
       derivIndex,
       amountUsdt: plan.priceUsdt,
-      status: "pending",
+      status: "open",
       expiresAt,
     })
     .returning();

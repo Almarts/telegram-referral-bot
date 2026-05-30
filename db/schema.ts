@@ -21,7 +21,7 @@ import { sql } from "drizzle-orm";
 // ── Enums ────────────────────────────────────────────────────────────────────
 
 export const invoiceStatusEnum = pgEnum("invoice_status", [
-  "pending",
+  "open",
   "paid",
   "expired",
   "refunded",
@@ -58,7 +58,7 @@ export const users = pgTable(
     tgUserId: bigint("tg_user_id", { mode: "bigint" }).notNull().unique(),
     tgUsername: text("tg_username"),
     tgLang: text("tg_lang"),
-    refCode: text("ref_code").unique(),
+    refCode: text("ref_code"),
     parentRefCode: text("parent_ref_code"),
     payoutAddress: text("payout_address"),
     payoutAddressChangedAt: timestamp("payout_address_changed_at", {
@@ -92,7 +92,7 @@ export const invoices = pgTable(
     depositAddress: text("deposit_address").notNull().unique(),
     derivIndex: integer("deriv_index").notNull(),
     amountUsdt: numeric("amount_usdt", { precision: 18, scale: 6 }).notNull(),
-    status: invoiceStatusEnum("status").notNull().default("pending"),
+    status: invoiceStatusEnum("status").notNull().default("open"),
     paidTxHash: text("paid_tx_hash").unique(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
