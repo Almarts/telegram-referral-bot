@@ -1,0 +1,4 @@
+ALTER TABLE "commission_ledger" ADD CONSTRAINT "commission_ledger_batch_id_payout_batches_id_fk" FOREIGN KEY ("batch_id") REFERENCES "public"."payout_batches"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "ix_payout_batches_beneficiary_status" ON "payout_batches" USING btree ("beneficiary_id","status");--> statement-breakpoint
+ALTER TABLE "commission_config" ADD CONSTRAINT "ck_l2_bps_range" CHECK ("commission_config"."l2_bps" >= 0 AND "commission_config"."l2_bps" <= 10000);--> statement-breakpoint
+ALTER TABLE "commission_ledger" ADD CONSTRAINT "ck_rate_bps_range" CHECK ("commission_ledger"."rate_bps" >= 0 AND "commission_ledger"."rate_bps" <= 10000);

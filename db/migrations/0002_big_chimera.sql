@@ -1,0 +1,1 @@
+ALTER TABLE "invoices" ALTER COLUMN "deposit_address" SET NOT NULL;

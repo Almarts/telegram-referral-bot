@@ -1,0 +1,55 @@
+{
+  "name": "telegram",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.mts",
+    "db:seed": "tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.4.2",
+    "@noble/hashes": "^1.4.0",
+    "@scure/base": "^1.1.9",
+    "@scure/bip32": "^1.4.0",
+    "@sentry/nextjs": "^10.55.0",
+    "@upstash/redis": "^1.38.0",
+    "decimal.js": "^10.6.0",
+    "drizzle-orm": "^0.45.2",
+    "grammy": "^1.43.0",
+    "next": "16.2.6",
+    "pg": "^8.21.0",
+    "pino": "^10.3.1",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "tronweb": "^6.3.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.41",
+    "@types/pg": "^8.11.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "^4.1.7",
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.6",
+    "tsx": "^4.22.3",
+    "typescript": "^5",
+    "vitest": "^4.1.7"
+  },
+  "overrides": {
+    "axios": "^1.15.1",
+    "ws": "^8.21.0"
+  }
+}

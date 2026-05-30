@@ -1,0 +1,8 @@
+{
+  "crons": [
+    { "path": "/api/cron/scan-payments", "schedule": "*/1 * * * *" },
+    { "path": "/api/cron/expire-access", "schedule": "*/1 * * * *" },
+    { "path": "/api/cron/payout-queue", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/sweep", "schedule": "*/10 * * * *" }
+  ]
+}
