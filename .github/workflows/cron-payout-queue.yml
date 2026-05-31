@@ -1,0 +1,18 @@
+name: 💰 Payout Queue Cron
+
+on:
+  schedule:
+    # Every 30 minutes
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  payout-queue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call payout-queue cron
+        run: |
+          curl -sSf -X GET \
+            "https://telegram-referral-bot-gules.vercel.app/api/cron/payout-queue" \
+            -H "Authorization: Bearer *** secrets.CRON_SECRET }}" \
+            -w "\nHTTP %{http_code}"

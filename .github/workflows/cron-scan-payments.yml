@@ -1,0 +1,18 @@
+name: 🔄 Scan Payments Cron
+
+on:
+  schedule:
+    # Every 5 minutes
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  scan-payments:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call scan-payments cron
+        run: |
+          curl -sSf -X GET \
+            "https://telegram-referral-bot-gules.vercel.app/api/cron/scan-payments" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -w "\nHTTP %{http_code}"

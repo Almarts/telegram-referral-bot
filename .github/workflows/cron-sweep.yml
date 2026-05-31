@@ -1,0 +1,18 @@
+name: 🧹 Sweep Cron
+
+on:
+  schedule:
+    # Every 10 minutes
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call sweep cron
+        run: |
+          curl -sSf -X GET \
+            "https://telegram-referral-bot-gules.vercel.app/api/cron/sweep" \
+            -H "Authorization: Bearer *** secrets.CRON_SECRET }}" \
+            -w "\nHTTP %{http_code}"
