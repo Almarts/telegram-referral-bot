@@ -324,7 +324,18 @@ export function createRealTron(opts: RealTronOpts): TronService {
       const usdtEntry = trc20.find(
         (t) => Object.keys(t)[0] === USDT_CONTRACT,
       );
-      if (!usdtEntry) return "0.000000";
+      if (!usdtEntry) {
+        // Account may be unactivated (no TRX). Fall back to checking TRC20
+        // transfers to detect USDT held by an unactivated address.
+        const transfers = await this.listUsdtTransfersTo(address, { limit: 1 });
+        if (transfers.length > 0) {
+          // Return the latest incoming transfer amount as the balance.
+          // This is a best-effort approximation — the real balance can
+          // only be obtained via triggerConstantContract.
+          return transfers[0].amountUsdt;
+        }
+        return "0.000000";
+      }
       return atomicToUsdt(usdtEntry[USDT_CONTRACT]);
     },
 
