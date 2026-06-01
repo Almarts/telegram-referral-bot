@@ -35,6 +35,7 @@ export function createFakeTron(): TronService & { controls: FakeTronControls } {
       return {
         address,
         sign: async () => ({ txId: makeTxHash() }),
+        privateKeyHex: async () => "0000000000000000000000000000000000000000000000000000000000000001",
       };
     },
 
@@ -43,6 +44,7 @@ export function createFakeTron(): TronService & { controls: FakeTronControls } {
       return {
         address,
         sign: async () => ({ txId: makeTxHash() }),
+        privateKeyHex: async () => "0000000000000000000000000000000000000000000000000000000000000002",
       };
     },
 
