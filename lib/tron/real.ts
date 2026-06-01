@@ -282,8 +282,8 @@ export function createRealTron(opts: RealTronOpts): TronService {
 
   /**
    * Build, sign, and broadcast a USDT TRC20 transfer.
-   * Uses TronWeb for building + signing, but broadcasts via wallet/broadcasthex
-   * (more reliable than tronweb's built-in broadcast).
+   * Uses TronWeb for building, then signs + broadcasts via wallet/broadcasthex
+   * which delivers reliably to the P2P network.
    */
   async function rawUsdtTransfer(
     privateKeyHex: string,
@@ -294,11 +294,12 @@ export function createRealTron(opts: RealTronOpts): TronService {
     const tw = await _getTronWeb();
     const atomicAmount = usdtToAtomic(amount);
 
-    // 1. Build the unsigned triggerSmartContract via tronweb (reliable builder)
-    const built = await tw.transactionBuilder.triggerSmartContract(
+    // 1. Build the unsigned triggerSmartContract via tronweb builder
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const built: any = await tw.transactionBuilder.triggerSmartContract(
       USDT_CONTRACT,
       "transfer(address,uint256)",
-      { feeLimit: 100_000_000, callValue: 0 }, // 100 TRX fee limit
+      { feeLimit: 100_000_000, callValue: 0 },
       [
         { type: "address", value: toAddress },
         { type: "uint256", value: atomicAmount.toString() },
@@ -306,11 +307,26 @@ export function createRealTron(opts: RealTronOpts): TronService {
       fromAddress,
     );
 
-    // 2. Sign using tronweb (reliable signing)
-    const signed = await tw.trx.sign(built.transaction, privateKeyHex);
+    const tx = built.transaction;
 
-    // 3. Broadcast via wallet/broadcasthex (more reliable than tronweb broadcast)
-    const broadcastBody = JSON.stringify({ transaction: signed });
+    // 2. Serialize raw_data to JSON and hash it with sha256
+    const rawDataJson = JSON.stringify(tx.raw_data);
+    const rawDataBytes = new TextEncoder().encode(rawDataJson);
+    const hash = sha256(rawDataBytes);
+
+    // 3. Sign with secp256k1 directly
+    const pkBytes = hexToBytes(privateKeyHex.replace(/^0x/, ""));
+    const sig = secp256k1.sign(hash, pkBytes);
+    const sigBytes = sig.toDERRawBytes();
+
+    // 4. Construct full signed transaction (with DER signature)
+    const signedTx = {
+      ...tx,
+      signature: [bytesToHex(sigBytes)],
+    };
+
+    // 5. Broadcast via wallet/broadcasthex
+    const broadcastBody = JSON.stringify({ transaction: signedTx });
     const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
     const br = await fetchWithTimeout(
       broadcastUrl,

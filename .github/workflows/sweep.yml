@@ -1,0 +1,18 @@
+name: Sweep
+
+on:
+  schedule:
+    # Every 10 minutes — GitHub Actions free tier allows this for public repos
+    - cron: "*/10 * * * *"
+  workflow_dispatch:  # manual trigger
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call sweep endpoint
+        run: |
+          curl -s -f \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ vars.VERCEL_URL }}/api/cron/sweep" \
+          && echo "sweep OK" || echo "sweep failed (no invoices or error)"
