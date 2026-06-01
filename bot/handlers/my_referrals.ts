@@ -24,7 +24,7 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
   const stats = await getReferralStats(user.id);
 
   const lines = [
-    `Your referral code: \`${user.refCode ?? "—"}\``,
+    `Your referral code: ${user.refCode ?? "—"}`,
     `Share link: t.me/${ctx.me.username}?start=${user.refCode ?? ""}`,
     "",
     `L1 referrals: ${stats.l1Count}`,
@@ -46,5 +46,5 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
     `L2 lifetime paid invoices: ${stats.l2LifetimePaid}`,
   );
 
-  await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+  await ctx.reply(lines.join("\n"));
 }

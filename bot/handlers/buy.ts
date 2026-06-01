@@ -1,10 +1,14 @@
 import type { Context } from "grammy";
 import { getActivePlans, createInvoice } from "@/bot/services/invoices";
 import { getDb } from "@/db/client";
-import { users, opsKillSwitch } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { users, opsKillSwitch, invoices, subscriptionPlans } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
 import { settleIfPaid } from "@/lib/settle";
+import { grantChannelAccess } from "@/bot/services/grant";
 import { cooldown } from "@/lib/kv";
+import { getEnv } from "@/lib/env";
+import { formatGrantMessage } from "@/bot/services/grant";
+import { getBot } from "@/bot/bot";
 
 const INVOICE_COOLDOWN_S = 30;
 
@@ -109,11 +113,11 @@ export async function handleBuyCallback(ctx: Context): Promise<void> {
         `*Amount:* ${invoice.amountUsdt} USDT`,
         "",
         `Send exactly *${invoice.amountUsdt} USDT* to:`,
-        `\`${invoice.depositAddress}\``,
+        "`" + invoice.depositAddress + "`",
         "",
         `Expires: ${invoice.expiresAt.toISOString().replace("T", " ").slice(0, 16)} UTC`,
         "",
-        "After sending, tap _I've paid_.",
+        "After sending, tap I've paid.",
       ].join("\n"),
       {
         parse_mode: "Markdown",
@@ -149,11 +153,79 @@ export async function handleCheckCallback(ctx: Context): Promise<void> {
   await ctx.answerCallbackQuery({ text: "Checking payment..." });
 
   try {
+    // Try to settle if still pending
     const result = await settleIfPaid(invoiceId);
 
     if (result.settled) {
       await ctx.reply("Payment confirmed! You should receive an invite link shortly.");
-    } else if (result.underpayment) {
+      // Send the invite link via DM — lookup tgUserId from DB
+      const db = getDb();
+      const dbUser = await db
+        .select({ tgUserId: users.tgUserId })
+        .from(users)
+        .where(eq(users.id, result.userId!))
+        .limit(1)
+        .then((r) => r[0] ?? null);
+      if (dbUser) {
+        const bot = getBot();
+        const channelId = getEnv().DEFAULT_CHANNEL_ID;
+        const invite = await bot.api.createChatInviteLink(Number(channelId), {
+          member_limit: 1,
+          expire_date: Math.floor(Date.now() / 1000) + 3600,
+        });
+        await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
+          inviteLink: invite.invite_link,
+          planName: result.planName || "Subscription",
+        }), { parse_mode: "Markdown" });
+      }
+      return;
+    }
+
+    // If not newly settled, check if invoice is already paid from a previous run
+    const db = getDb();
+    const paidInvoice = await db
+      .select({
+        userId: invoices.userId,
+        status: invoices.status,
+        planId: invoices.planId,
+      })
+      .from(invoices)
+      .where(and(eq(invoices.id, invoiceId), eq(invoices.status, "paid")))
+      .limit(1)
+      .then((r) => r[0] ?? null);
+
+    if (paidInvoice) {
+      // Already paid — try to send invite link
+      const plan = await db
+        .select({ name: subscriptionPlans.name })
+        .from(subscriptionPlans)
+        .where(eq(subscriptionPlans.id, paidInvoice.planId))
+        .limit(1)
+        .then((r) => r[0] ?? null);
+
+      await ctx.reply("Payment confirmed! You should receive an invite link shortly.");
+      const dbUser = await db
+        .select({ tgUserId: users.tgUserId })
+        .from(users)
+        .where(eq(users.id, paidInvoice.userId))
+        .limit(1)
+        .then((r) => r[0] ?? null);
+      if (dbUser) {
+        const bot = getBot();
+        const channelId = getEnv().DEFAULT_CHANNEL_ID;
+        const invite = await bot.api.createChatInviteLink(Number(channelId), {
+          member_limit: 1,
+          expire_date: Math.floor(Date.now() / 1000) + 3600,
+        });
+        await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
+          inviteLink: invite.invite_link,
+          planName: plan?.name || "Subscription",
+        }), { parse_mode: "Markdown" });
+      }
+      return;
+    }
+
+    if (result.underpayment) {
       await ctx.reply(
         "We detected a payment but the amount was less than required. Please send the full amount to complete your purchase.",
       );

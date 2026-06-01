@@ -2,8 +2,7 @@ name: 🧹 Sweep Cron
 
 on:
   schedule:
-    # Every 10 minutes
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -14,5 +13,5 @@ jobs:
         run: |
           curl -sSf -X GET \
             "https://telegram-referral-bot-gules.vercel.app/api/cron/sweep" \
-            -H "Authorization: Bearer *** secrets.CRON_SECRET }}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -w "\nHTTP %{http_code}"

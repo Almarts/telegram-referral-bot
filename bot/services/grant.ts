@@ -82,6 +82,8 @@ export async function grantChannelAccess(params: GrantParams): Promise<void> {
     await bot.api.sendMessage(Number(tgUserId), message, {
       parse_mode: "Markdown",
     });
+
+    console.log("grantChannelAccess SUCCESS for user", tgUserId, "link:", invite.invite_link);
   } catch (err) {
     console.error("grantChannelAccess failed:", err);
     // Don't re-throw — settlement already succeeded, grant is best-effort

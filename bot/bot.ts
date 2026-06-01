@@ -38,6 +38,7 @@ export function createBot(token: string): Bot<Context> {
   bot.hears("My referrals", handleMyReferrals);
   bot.hears("Earnings", handleEarnings);
   bot.hears("Set payout address", handleSetPayoutAddress);
+  bot.hears("Buy access", handleBuy);
 
   // Withdraw command
   bot.command("withdraw", handleWithdrawNow);
