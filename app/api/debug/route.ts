@@ -11,6 +11,7 @@ export const runtime = "nodejs";
 export async function GET(): Promise<Response> {
   const err = getLastBotError();
   const env = getEnv();
+  const commitSha = process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown";
 
   const db = getDb();
   const tron = getTron();
@@ -70,6 +71,7 @@ export async function GET(): Promise<Response> {
       {
         lastBotError: err,
         hasError: err !== null,
+        commitSha: commitSha,
         coldWallet: {
           address: env.TRON_COLD_WALLET_ADDRESS,
           usdt: coldUsdt,
