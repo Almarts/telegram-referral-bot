@@ -320,15 +320,19 @@ export function createRealTron(opts: RealTronOpts): TronService {
       throw new Error("No signature in tronweb signed result");
     }
 
-    // 4. Deep-clone raw_data to strip any TronWeb BigInt/prototype fields,
-    //    then build a clean transaction with raw_data + signature.
-    const cleanRawData = JSON.parse(JSON.stringify(tx.raw_data));
+    // 4. Deep-clone raw_data handling BigInt (which JSON.stringify can't handle).
+    //    Convert BigInt values to strings since the Tron API expects string numbers.
+    function bigintReplacer(key: string, value: unknown): unknown {
+      if (typeof value === "bigint") return value.toString();
+      return value;
+    }
+    const cleanRawData = JSON.parse(JSON.stringify(tx.raw_data, bigintReplacer));
     const finalTx = {
       raw_data: cleanRawData,
       signature: [sigHex],
     };
 
-    // 5. Use wallet/broadcasttransaction (JSON) 
+    // 5. Broadcast via wallet/broadcasthex
     const broadcastBody = JSON.stringify(finalTx);
     const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
     const br = await fetchWithTimeout(
