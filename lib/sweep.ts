@@ -19,17 +19,40 @@ export interface SweepContext {
 export interface SweepDecision {
   swept: boolean;
   txHash: string | null;
+  needsTrxTopUp: boolean;
 }
+
+// Minimum TRX needed on a deposit address to execute a USDT TRC20 transfer.
+export const DEFAULT_TRX_FOR_TRANSFER_SUN = 30_000_000n;
 
 // ── Pure decision ──────────────────────────────────────────────────────────
 
 export function sweepInvoice(ctx: SweepContext): SweepDecision {
   if (ctx.usdtBalance === "0.000000" || ctx.usdtBalance === "0") {
-    return { swept: true, txHash: null };
+    return { swept: true, txHash: null, needsTrxTopUp: false };
   }
-  // If the deposit address has USDT but no TRX (unactivated), we still try
-  // to send USDT. TronGrid's broadcast will use feeLimit to cover energy.
-  return { swept: false, txHash: null };
+
+  if (ctx.trxBalanceSun < DEFAULT_TRX_FOR_TRANSFER_SUN) {
+    return { swept: false, txHash: null, needsTrxTopUp: true };
+  }
+
+  return { swept: false, txHash: null, needsTrxTopUp: false };
+}
+
+/** Check if a transaction actually exists on chain via TronGrid. */
+async function txExistsOnChain(txHash: string): Promise<boolean> {
+  try {
+    const url = `https://api.trongrid.io/v1/transactions/${txHash}`;
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { data?: unknown[] };
+    return Array.isArray(body.data) && body.data.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -85,7 +108,19 @@ export async function processSweeps(): Promise<number> {
         continue;
       }
 
-      // Has USDT — send invoice amount to cold wallet
+      if (decision.needsTrxTopUp) {
+        const hotSigner = tron.hotSigner();
+        const topUp = await tron.sendTrx({
+          fromAddress: hotSigner.address,
+          toAddress: address,
+          amountSun: DEFAULT_TRX_FOR_TRANSFER_SUN,
+          signer: hotSigner,
+        });
+        console.log(`sweep: topped up ${topUp.txHash} for ${address}`);
+        continue;
+      }
+
+      // Has USDT and enough TRX — send invoice amount to cold wallet
       const sweepAmount = inv.amountUsdt;
       const hasFullBalance = gte(usdtBalance, sweepAmount);
       const amountToSweep = hasFullBalance ? sweepAmount : usdtBalance;
@@ -103,6 +138,15 @@ export async function processSweeps(): Promise<number> {
         amount: amountToSweep,
         signer,
       });
+
+      // Verify the transaction actually landed on chain
+      const exists = await txExistsOnChain(tx.txHash);
+      if (!exists) {
+        console.error(
+          `sweep: tx ${tx.txHash} for ${inv.id} not found on chain after broadcast — skipping DB update`,
+        );
+        continue;
+      }
 
       const updated = await db
         .update(invoices)
