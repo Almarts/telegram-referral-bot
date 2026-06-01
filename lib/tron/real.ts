@@ -314,15 +314,18 @@ export function createRealTron(opts: RealTronOpts): TronService {
     const rawDataBytes = new TextEncoder().encode(rawDataJson);
     const hash = sha256(rawDataBytes);
 
-    // 3. Sign with secp256k1 directly
+    // 3. Sign with secp256k1 directly and extract r||s concatenation (64 bytes)
     const pkBytes = hexToBytes(privateKeyHex.replace(/^0x/, ""));
     const sig = secp256k1.sign(hash, pkBytes);
-    const sigBytes = sig.toDERRawBytes();
+    // Tron expects a raw 64-byte signature (r || s), not DER-encoded
+    const rBytes = sig.r.toBytesBE();   // 32 bytes
+    const sBytes = sig.s.toBytesBE();   // 32 bytes
+    const rawSig = concatBytes(rBytes, sBytes);
 
-    // 4. Construct full signed transaction (with DER signature)
+    // 4. Construct full signed transaction (with raw 64-byte signature)
     const signedTx = {
       ...tx,
-      signature: [bytesToHex(sigBytes)],
+      signature: [bytesToHex(rawSig)],
     };
 
     // 5. Broadcast via wallet/broadcasthex
