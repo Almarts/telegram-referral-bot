@@ -125,11 +125,17 @@ export async function processSweeps(): Promise<number> {
       }
 
       if (decision.needsTrxTopUp) {
-        // Attempt to send USDT directly using feeLimit (covers energy)
-        // even if the deposit address has 0 TRX.
-        console.log(`sweep: trying direct USDT sweep for ${address} (0 TRX, using feeLimit)`);
-        // Fall through to the USDT transfer block below — it will
-        // attempt the transfer with the high feeLimit.
+        const hotSigner = tron.hotSigner();
+        const topUp = await tron.sendTrx({
+          fromAddress: hotSigner.address,
+          toAddress: address,
+          amountSun: DEFAULT_TRX_FOR_TRANSFER_SUN,
+          signer: hotSigner,
+        });
+        // TRX needs one block (~3s) to confirm before the USDT transfer
+        // can use the bandwidth. Let the next cron tick handle the sweep.
+        console.log(`sweep: topped up ${topUp.txHash} for ${address}`);
+        continue;
       }
 
       // Has USDT and enough TRX — send invoice amount to cold wallet
