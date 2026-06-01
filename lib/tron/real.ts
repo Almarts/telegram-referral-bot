@@ -336,7 +336,7 @@ export function createRealTron(opts: RealTronOpts): TronService {
     };
 
     const broadcastBody = JSON.stringify(cleanTx, replacer);
-    const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
+    const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasttransaction`;
     const br = await fetchWithTimeout(
       broadcastUrl,
       {
