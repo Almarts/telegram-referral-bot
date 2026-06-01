@@ -312,19 +312,10 @@ export function createRealTron(opts: RealTronOpts): TronService {
     // 2. Sign using tronweb (this hashes raw_data via protobuf, giving correct hash)
     const signed = await tw.trx.sign(built.transaction, privateKeyHex);
 
-    // 3. Build a clean JSON-safe signed transaction for broadcasthex.
-    //    TronWeb's sign() returns a complex object with prototype fields that
-    //    interfere with JSON.stringify. Manually extract the raw fields.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cleanTx: any = {
-      raw_data: tx.raw_data,
-      txID: tx.txID ?? tx.txid,
-      signature:
-        typeof signed.signature?.[0] === "string"
-          ? [signed.signature[0]]
-          : signed.signature ?? [],
-    };
-    if (tx.raw_data_hex) cleanTx.raw_data_hex = tx.raw_data_hex;
+    // 3. Broadcast via wallet/broadcasthex.
+    //    Deep-clone the signed tx to strip TronWeb prototype fields,
+    //    otherwise JSON.stringify produces garbage for non-JSON-safe values.
+    const cleanTx = JSON.parse(JSON.stringify(signed));
 
     const broadcastBody = JSON.stringify({ transaction: cleanTx });
     const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
