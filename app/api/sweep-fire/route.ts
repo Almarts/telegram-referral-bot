@@ -11,7 +11,6 @@ export async function GET(): Promise<Response> {
   const db = getDb();
   const tron = getTron();
 
-  // Manually check the invoice balance
   const inv = await db
     .select()
     .from(invoices)
@@ -19,17 +18,38 @@ export async function GET(): Promise<Response> {
     .limit(1)
     .then(r => r[0]);
 
-  let manualBalance = "not checked";
-  if (inv?.depositAddress) {
-    manualBalance = await tron.usdtBalance(inv.depositAddress);
+  const address = inv?.depositAddress;
+  const usdtBalance = address ? await tron.usdtBalance(address) : "no addr";
+  const trxBalanceSun = address ? (await tron.trxBalanceSun(address)).toString() : "no addr";
+
+  // Try sending 1 TRX for activation
+  let sendResult: any = "not attempted";
+  try {
+    const hotSigner = tron.hotSigner();
+    sendResult = {
+      hotAddress: hotSigner.address,
+      balUsdt: await tron.usdtBalance(hotSigner.address),
+      balTrx: (await tron.trxBalanceSun(hotSigner.address)).toString(),
+    };
+    // Actually try to send
+    const topUp = await tron.sendTrx({
+      fromAddress: hotSigner.address,
+      toAddress: address!,
+      amountSun: 1_000_000n, // 1 TRX
+      signer: hotSigner,
+    });
+    sendResult.txHash = topUp.txHash;
+    sendResult.success = true;
+  } catch (e: any) {
+    sendResult = { error: e.message ?? String(e), stack: (e.stack ?? "").slice(0, 300) };
   }
 
-  const swept = await processSweeps();
-
   return Response.json({
-    manualBalance,
-    depositAddress: inv?.depositAddress,
-    processSweepsResult: swept,
+    depositAddress: address,
+    usdtBalance,
+    trxBalanceSun,
+    sendResult,
+    processSweepsResult: await processSweeps(),
     ts: new Date().toISOString(),
   });
 }
