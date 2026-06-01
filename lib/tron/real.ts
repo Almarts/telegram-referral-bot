@@ -281,9 +281,9 @@ export function createRealTron(opts: RealTronOpts): TronService {
   // -----------------------------------------------------------------------
 
   /**
-   * Build, sign, and broadcast a USDT TRC20 transfer as a raw hex transaction.
-   * Uses @noble/curves for signing (same keys as TronWeb but more reliable
-   * broadcast delivery).
+   * Build, sign, and broadcast a USDT TRC20 transfer.
+   * Uses TronWeb for building + signing, but broadcasts via wallet/broadcasthex
+   * (more reliable than tronweb's built-in broadcast).
    */
   async function rawUsdtTransfer(
     privateKeyHex: string,
@@ -306,45 +306,11 @@ export function createRealTron(opts: RealTronOpts): TronService {
       fromAddress,
     );
 
-    const tx = built.transaction as Record<string, unknown>;
+    // 2. Sign using tronweb (reliable signing)
+    const signed = await tw.trx.sign(built.transaction, privateKeyHex);
 
-    // 2. Ensure we have the ref_block_bytes, ref_block_num, etc.
-    //    TronWeb should set these already via triggerSmartContract.
-    //    Add a reasonable expiration if missing.
-    if (!tx.expiration) {
-      tx.expiration = (Math.floor(Date.now()) + 60_000) * 1000; // +60s in ms
-    }
-
-    // 3. Serialize as JSON + compute raw_data_hex
-    const rawData = {
-      contract: tx.raw_data?.contract ?? tx.raw_data?.contracts ?? [],
-      ref_block_bytes: tx.raw_data?.ref_block_bytes ?? "0000",
-      ref_block_hash: tx.raw_data?.ref_block_hash ?? "0000000000000000",
-      expiration: tx.expiration ?? (Math.floor(Date.now()) + 60_000) * 1000,
-      timestamp: tx.raw_data?.timestamp ?? Date.now(),
-    };
-    // Keep original raw_data structure if it exists
-    const rawDataJson = tx.raw_data
-      ? JSON.stringify(tx.raw_data)
-      : JSON.stringify(rawData);
-
-    // 4. Hash raw_data with sha256
-    const rawDataBytes = new TextEncoder().encode(rawDataJson);
-    const hash = sha256(rawDataBytes);
-
-    // 5. Sign with secp256k1
-    const pkBytes = hexToBytes(privateKeyHex.replace(/^0x/, ""));
-    const sig = secp256k1.sign(hash, pkBytes);
-    const sigBytes = sig.toDERRawBytes();
-
-    // 6. Construct the full signed transaction for broadcasthex
-    const signedTx: Record<string, unknown> = {
-      ...tx,
-      signature: [bytesToHex(sigBytes)],
-    };
-
-    // 7. Broadcast via wallet/broadcasthex (raw hex endpoint)
-    const broadcastBody = JSON.stringify({ transaction: signedTx });
+    // 3. Broadcast via wallet/broadcasthex (more reliable than tronweb broadcast)
+    const broadcastBody = JSON.stringify({ transaction: signed });
     const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
     const br = await fetchWithTimeout(
       broadcastUrl,
