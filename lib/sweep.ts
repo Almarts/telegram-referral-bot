@@ -12,7 +12,6 @@ export interface SweepContext {
   derivIndex: number;
   invoiceId: string;
   coldAddress: string;
-  trxForTransferSun: bigint;
   usdtBalance: string;
   trxBalanceSun: bigint;
 }
@@ -20,62 +19,26 @@ export interface SweepContext {
 export interface SweepDecision {
   swept: boolean;
   txHash: string | null;
-  trxTopUpHash: string | null;
-  needsTrxTopUp: boolean;
 }
-
-// Minimum TRX needed on a deposit address to execute a USDT TRC20 transfer.
-// 30 TRX ≈ covers energy + bandwidth at current rates with buffer.
-export const DEFAULT_TRX_FOR_TRANSFER_SUN = 30_000_000n;
 
 // ── Pure decision ──────────────────────────────────────────────────────────
 
-/**
- * Determine the sweep action for a single invoice's deposit address.
- *
- * Pure function — no DB, no Tron RPC. The caller executes the decision.
- *
- * - balance == 0  → already swept or no payment received, mark swept
- * - TRX too low   → caller must top-up from hot wallet first, then retry
- * - otherwise     → caller must send USDT to cold wallet
- */
 export function sweepInvoice(ctx: SweepContext): SweepDecision {
   if (ctx.usdtBalance === "0.000000" || ctx.usdtBalance === "0") {
-    return { swept: true, txHash: null, trxTopUpHash: null, needsTrxTopUp: false };
+    return { swept: true, txHash: null };
   }
-
-  if (ctx.trxBalanceSun < ctx.trxForTransferSun) {
-    return { swept: false, txHash: null, trxTopUpHash: null, needsTrxTopUp: true };
-  }
-
-  // Has both USDT and TRX — caller should send USDT to cold
-  // We can't know the tx hash yet, return swept=false to signal "needs transfer"
-  return { swept: false, txHash: null, trxTopUpHash: null, needsTrxTopUp: false };
+  // If the deposit address has USDT but no TRX (unactivated), we still try
+  // to send USDT. TronGrid's broadcast will use feeLimit to cover energy.
+  return { swept: false, txHash: null };
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-/**
- * Sweep USDT from paid invoices' deposit addresses to the cold wallet.
- *
- * Process:
- * 1. Fetch paid invoices older than 15m where swept=false (LIMIT 100).
- * 2. For each: check USDT balance on the deposit address.
- *    - Zero → mark swept=true (nothing to sweep).
- *    - Positive → if TRX too low, top-up from hot wallet first.
- *      Then send USDT to cold wallet, mark swept=true + sweep_tx_hash.
- *
- * Idempotent: WHERE swept=false prevents double-sweep. The KV cron lease
- * prevents concurrent runs.
- *
- * Returns count of swept invoices this tick.
- */
 export async function processSweeps(): Promise<number> {
   const db = getDb();
   const tron = getTron();
   const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
 
-  // Fetch paid invoices older than 15m, not yet swept
   const toSweep = await db
     .select({
       id: invoices.id,
@@ -109,13 +72,11 @@ export async function processSweeps(): Promise<number> {
         derivIndex: inv.derivIndex,
         invoiceId: inv.id,
         coldAddress,
-        trxForTransferSun: DEFAULT_TRX_FOR_TRANSFER_SUN,
         usdtBalance,
         trxBalanceSun,
       });
 
       if (decision.swept && !decision.txHash) {
-        // Zero balance — mark swept
         await db
           .update(invoices)
           .set({ swept: true })
@@ -124,23 +85,7 @@ export async function processSweeps(): Promise<number> {
         continue;
       }
 
-      if (decision.needsTrxTopUp) {
-        const hotSigner = tron.hotSigner();
-        const topUp = await tron.sendTrx({
-          fromAddress: hotSigner.address,
-          toAddress: address,
-          amountSun: DEFAULT_TRX_FOR_TRANSFER_SUN,
-          signer: hotSigner,
-        });
-        // TRX needs one block (~3s) to confirm before the USDT transfer
-        // can use the bandwidth. Let the next cron tick handle the sweep.
-        console.log(`sweep: topped up ${topUp.txHash} for ${address}`);
-        continue;
-      }
-
-      // Has USDT and enough TRX — send invoice amount to cold wallet
-      // Use the invoice amount, not the full balance, to avoid silently
-      // absorbing overpayments (which would make refunds impossible).
+      // Has USDT — send invoice amount to cold wallet
       const sweepAmount = inv.amountUsdt;
       const hasFullBalance = gte(usdtBalance, sweepAmount);
       const amountToSweep = hasFullBalance ? sweepAmount : usdtBalance;
@@ -159,7 +104,6 @@ export async function processSweeps(): Promise<number> {
         signer,
       });
 
-      // Update DB immediately to preserve txHash
       const updated = await db
         .update(invoices)
         .set({ swept: true, sweepTxHash: tx.txHash })
@@ -172,7 +116,6 @@ export async function processSweeps(): Promise<number> {
       swept++;
     } catch (err) {
       console.error(`sweep invoice ${inv.id}:`, err);
-      // Don't fail the batch, retry on next tick
     }
   }
 
