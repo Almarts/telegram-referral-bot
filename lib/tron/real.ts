@@ -277,13 +277,13 @@ export function createRealTron(opts: RealTronOpts): TronService {
   }
 
   // -----------------------------------------------------------------------
-  // USDT transfer via raw broadcasthex (avoids tronweb's broken broadcast)
+  // USDT transfer via triggerConstantContract + sign + broadcasttransaction
   // -----------------------------------------------------------------------
 
   /**
    * Build, sign, and broadcast a USDT TRC20 transfer.
-   * Uses TronWeb for building, then signs + broadcasts via wallet/broadcasthex
-   * which delivers reliably to the P2P network.
+   * Uses TronWeb's triggerConstantContract to build the transaction,
+   * trx.sign to sign, then broadcasts via wallet/broadcasttransaction.
    */
   async function rawUsdtTransfer(
     privateKeyHex: string,
@@ -293,52 +293,45 @@ export function createRealTron(opts: RealTronOpts): TronService {
   ): Promise<{ txHash: string }> {
     const tw = await _getTronWeb();
     const atomicAmount = usdtToAtomic(amount);
+    const usdtHex = tw.address.toHex(USDT_CONTRACT);
+    const fromHex = tw.address.toHex(fromAddress);
 
-    // 1. Build the unsigned triggerSmartContract via tronweb builder
+    // 1. Build via triggerConstantContract (the proven working approach)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const built: any = await tw.transactionBuilder.triggerSmartContract(
-      USDT_CONTRACT,
+    const built: any = await tw.transactionBuilder.triggerConstantContract(
+      usdtHex,
       "transfer(address,uint256)",
-      { feeLimit: 100_000_000, callValue: 0 },
+      { feeLimit: 100_000_000 },
       [
         { type: "address", value: toAddress },
         { type: "uint256", value: atomicAmount.toString() },
       ],
-      fromAddress,
+      fromHex,
     );
+
+    if (!built.result?.result) {
+      throw new Error(`triggerConstantContract failed: ${JSON.stringify(built)}`);
+    }
 
     const tx = built.transaction;
 
-    // 2. Sign using tronweb (this hashes raw_data via protobuf, giving correct hash)
-    const signed = await tw.trx.sign(built.transaction, privateKeyHex);
+    // 2. Sign using tronweb
+    const signed = await tw.trx.sign(tx, privateKeyHex);
 
-    // 3. Extract the hex signature from tronweb's signed result
-    const sigHex: string =
-      (signed.signature?.[0]) ?? "";
-
+    // 3. Extract signature
+    const sigHex: string = signed.signature?.[0] ?? "";
     if (!sigHex) {
       throw new Error("No signature in tronweb signed result");
     }
 
-    // 4. Serialize the signed transaction with a custom replacer that converts
-    //    BigInt and Buffer/Uint8Array to their string representations.
-    const replacer = (key: string, value: unknown): unknown => {
-      if (typeof value === "bigint") return value.toString();
-      if (value instanceof Uint8Array) return bytesToHex(value);
-      if (typeof Buffer !== "undefined" && typeof Buffer === "function" && Buffer.isBuffer(value)) return bytesToHex(new Uint8Array(value));
-      return value;
-    };
-
-    // Build minimal transaction: raw_data + signature
-    const cleanTx = {
+    // 4. Broadcast via wallet/broadcasttransaction (the proven working API)
+    const body = JSON.stringify({
       raw_data: tx.raw_data,
       signature: [sigHex],
-    };
+    });
 
-    const broadcastBody = JSON.stringify(cleanTx, replacer);
-    const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasttransaction`;
-    const br = await fetchWithTimeout(
-      broadcastUrl,
+    const res = await fetchWithTimeout(
+      `${TRONGRID_BASE}/wallet/broadcasttransaction`,
       {
         method: "POST",
         headers: {
@@ -346,17 +339,17 @@ export function createRealTron(opts: RealTronOpts): TronService {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: broadcastBody,
+        body,
       },
       30_000,
     );
 
-    if (!br.ok) {
-      const errBody = await br.text().catch(() => "");
-      throw new Error(`broadcasthex failed ${br.status}: ${errBody}`);
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      throw new Error(`broadcasttransaction failed ${res.status}: ${errBody}`);
     }
 
-    const result = (await br.json()) as {
+    const result = (await res.json()) as {
       result?: boolean;
       code?: string;
       message?: string;
@@ -365,14 +358,14 @@ export function createRealTron(opts: RealTronOpts): TronService {
 
     if (result.result === false) {
       throw new Error(
-        `broadcasthex rejected: code=${result.code ?? "?"} message=${result.message ?? "?"}`,
+        `broadcasttransaction rejected: code=${result.code ?? "?"} message=${result.message ?? "?"}`,
       );
     }
 
     const txHash = result.txid ?? "";
     if (!txHash) {
       throw new Error(
-        `broadcasthex response missing txid: ${JSON.stringify(result)}`,
+        `broadcasttransaction response missing txid: ${JSON.stringify(result)}`,
       );
     }
 
