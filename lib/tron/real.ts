@@ -312,33 +312,24 @@ export function createRealTron(opts: RealTronOpts): TronService {
     // 2. Sign using tronweb (this hashes raw_data via protobuf, giving correct hash)
     const signed = await tw.trx.sign(built.transaction, privateKeyHex);
 
-    // 3. Get the protobuf-encoded raw_data as hex (this is what Tron signs).
-    //    TronWeb after signing sets raw_data_hex on the transaction.
-    const rawDataHex: string =
-      signed.raw_data_hex ?? tx.raw_data_hex ?? "";
+    // 3. Extract the hex signature from tronweb's signed result
+    const sigHex: string =
+      (signed.signature?.[0]) ?? "";
 
-    if (!rawDataHex) {
-      throw new Error("No raw_data_hex available from TronWeb build");
+    if (!sigHex) {
+      throw new Error("No signature in tronweb signed result");
     }
 
-    // 4. Hash the raw_data_hex (protobuf bytes) with sha256, then sign
-    const rawBytes = hexToBytes(rawDataHex);
-    const hash = sha256(rawBytes);
-
-    const pkBytes = hexToBytes(privateKeyHex.replace(/^0x/, ""));
-    const sig = secp256k1.sign(hash, pkBytes);
-    // Tron expects a raw 64-byte signature (r || s), not DER-encoded
-    const rHex = sig.r.toString(16).padStart(64, "0");
-    const sHex = sig.s.toString(16).padStart(64, "0");
-    const rawSig = concatBytes(hexToBytes(rHex), hexToBytes(sHex));
-
-    // 5. Build clean transaction with protobuf hex + signature
+    // 4. Deep-clone raw_data to strip any TronWeb BigInt/prototype fields,
+    //    then build a clean transaction with raw_data + signature.
+    const cleanRawData = JSON.parse(JSON.stringify(tx.raw_data));
     const finalTx = {
-      raw_data_hex: rawDataHex,
-      signature: [bytesToHex(rawSig)],
+      raw_data: cleanRawData,
+      signature: [sigHex],
     };
 
-    const broadcastBody = JSON.stringify({ transaction: finalTx });
+    // 5. Use wallet/broadcasttransaction (JSON) 
+    const broadcastBody = JSON.stringify(finalTx);
     const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
     const br = await fetchWithTimeout(
       broadcastUrl,
