@@ -320,20 +320,29 @@ export function createRealTron(opts: RealTronOpts): TronService {
       throw new Error("No signature in tronweb signed result");
     }
 
-    // 4. Deep-clone raw_data handling BigInt (which JSON.stringify can't handle).
-    //    Convert BigInt values to strings since the Tron API expects string numbers.
-    function bigintReplacer(key: string, value: unknown): unknown {
-      if (typeof value === "bigint") return value.toString();
-      return value;
+    // 4. Build a clean transaction object suitable for JSON serialization.
+    //    TronWeb wraps binary data in non-JSON-safe types (Buffer, BigInt).
+    //    Recursively convert everything to plain JSON-safe values.
+    function toPlain(obj: unknown): unknown {
+      if (obj === null || obj === undefined) return null;
+      if (typeof obj === "bigint") return obj.toString();
+      if (typeof obj === "string" || typeof obj === "number" || typeof obj === "boolean") return obj;
+      if (obj instanceof Uint8Array || (typeof Buffer !== "undefined" && Buffer.isBuffer(obj))) {
+        return bytesToHex(new Uint8Array(obj));
+      }
+      if (Array.isArray(obj)) return obj.map(toPlain);
+      if (typeof obj === "object") {
+        const result: Record<string, unknown> = {};
+        for (const key of Object.keys(obj as Record<string, unknown>)) {
+          result[key] = toPlain((obj as Record<string, unknown>)[key]);
+        }
+        return result;
+      }
+      return String(obj);
     }
-    const cleanRawData = JSON.parse(JSON.stringify(tx.raw_data, bigintReplacer));
-    const finalTx = {
-      raw_data: cleanRawData,
-      signature: [sigHex],
-    };
 
-    // 5. Broadcast via wallet/broadcasthex
-    const broadcastBody = JSON.stringify(finalTx);
+    const cleanTx = toPlain(signed) as Record<string, unknown>;
+    const broadcastBody = JSON.stringify(cleanTx);
     const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
     const br = await fetchWithTimeout(
       broadcastUrl,
