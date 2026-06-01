@@ -43,3 +43,9 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+scripts/check_*.py
+scripts/deploy.py
+scripts/update-*.py
+scripts/bot_token.txt
+scripts/run_sweep.py
+scripts/check_invoices.py
