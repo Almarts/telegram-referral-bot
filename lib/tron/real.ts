@@ -309,28 +309,12 @@ export function createRealTron(opts: RealTronOpts): TronService {
 
     const tx = built.transaction;
 
-    // 2. Serialize raw_data to JSON and hash it with sha256
-    const rawDataJson = JSON.stringify(tx.raw_data);
-    const rawDataBytes = new TextEncoder().encode(rawDataJson);
-    const hash = sha256(rawDataBytes);
+    // 2. Sign using tronweb (this hashes raw_data via protobuf, giving correct hash)
+    const signed = await tw.trx.sign(built.transaction, privateKeyHex);
 
-    // 3. Sign with secp256k1 directly and extract r||s concatenation (64 bytes)
-    const pkBytes = hexToBytes(privateKeyHex.replace(/^0x/, ""));
-    const sig = secp256k1.sign(hash, pkBytes);
-    // Tron expects a raw 64-byte signature (r || s), not DER-encoded.
-    // sig.r and sig.s are bigint — convert to 32-byte big-endian.
-    const rHex = sig.r.toString(16).padStart(64, "0");
-    const sHex = sig.s.toString(16).padStart(64, "0");
-    const rawSig = concatBytes(hexToBytes(rHex), hexToBytes(sHex));
-
-    // 4. Construct full signed transaction (with raw 64-byte signature)
-    const signedTx = {
-      ...tx,
-      signature: [bytesToHex(rawSig)],
-    };
-
-    // 5. Broadcast via wallet/broadcasthex
-    const broadcastBody = JSON.stringify({ transaction: signedTx });
+    // 3. Broadcast via wallet/broadcasthex (avoids tronweb's broken broadcast)
+    const signedObj = typeof signed === "string" ? JSON.parse(signed) : signed;
+    const broadcastBody = JSON.stringify({ transaction: signedObj });
     const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
     const br = await fetchWithTimeout(
       broadcastUrl,
