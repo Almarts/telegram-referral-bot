@@ -312,12 +312,33 @@ export function createRealTron(opts: RealTronOpts): TronService {
     // 2. Sign using tronweb (this hashes raw_data via protobuf, giving correct hash)
     const signed = await tw.trx.sign(built.transaction, privateKeyHex);
 
-    // 3. Broadcast via wallet/broadcasthex.
-    //    Deep-clone the signed tx to strip TronWeb prototype fields,
-    //    otherwise JSON.stringify produces garbage for non-JSON-safe values.
-    const cleanTx = JSON.parse(JSON.stringify(signed));
+    // 3. Get the protobuf-encoded raw_data as hex (this is what Tron signs).
+    //    TronWeb after signing sets raw_data_hex on the transaction.
+    const rawDataHex: string =
+      signed.raw_data_hex ?? tx.raw_data_hex ?? "";
 
-    const broadcastBody = JSON.stringify({ transaction: cleanTx });
+    if (!rawDataHex) {
+      throw new Error("No raw_data_hex available from TronWeb build");
+    }
+
+    // 4. Hash the raw_data_hex (protobuf bytes) with sha256, then sign
+    const rawBytes = hexToBytes(rawDataHex);
+    const hash = sha256(rawBytes);
+
+    const pkBytes = hexToBytes(privateKeyHex.replace(/^0x/, ""));
+    const sig = secp256k1.sign(hash, pkBytes);
+    // Tron expects a raw 64-byte signature (r || s), not DER-encoded
+    const rHex = sig.r.toString(16).padStart(64, "0");
+    const sHex = sig.s.toString(16).padStart(64, "0");
+    const rawSig = concatBytes(hexToBytes(rHex), hexToBytes(sHex));
+
+    // 5. Build clean transaction with protobuf hex + signature
+    const finalTx = {
+      raw_data_hex: rawDataHex,
+      signature: [bytesToHex(rawSig)],
+    };
+
+    const broadcastBody = JSON.stringify({ transaction: finalTx });
     const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
     const br = await fetchWithTimeout(
       broadcastUrl,
