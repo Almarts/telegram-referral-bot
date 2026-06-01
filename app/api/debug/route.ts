@@ -15,6 +15,9 @@ export async function GET(): Promise<Response> {
 
   const db = getDb();
   const tron = getTron();
+  
+  // Hot wallet info
+  const hotSigner = tron.hotSigner();
 
   // Paid invoices
   const paid = await db
@@ -72,6 +75,9 @@ export async function GET(): Promise<Response> {
         lastBotError: err,
         hasError: err !== null,
         commitSha: commitSha,
+        hotWallet: {
+          signerAddress: hotSigner.address,
+        },
         coldWallet: {
           address: env.TRON_COLD_WALLET_ADDRESS,
           usdt: coldUsdt,
