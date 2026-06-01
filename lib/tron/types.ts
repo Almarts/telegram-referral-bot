@@ -1,6 +1,8 @@
 export interface Signer {
   readonly address: string;
   sign(rawTx: unknown): Promise<{ txId: string }>;
+  /** Hex private key (for raw signing outside tronweb). */
+  privateKeyHex(): Promise<string>;
 }
 
 export interface UsdtTransfer {

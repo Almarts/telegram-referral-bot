@@ -25,6 +25,9 @@ export interface SweepDecision {
 // Minimum TRX needed on a deposit address to execute a USDT TRC20 transfer.
 export const DEFAULT_TRX_FOR_TRANSFER_SUN = 1_000_000n;
 
+// TRX to return to hot wallet after sweep (keep 1 TRX on deposit)
+export const KEEP_TRX_ON_DEPOSIT_SUN = 1_000_000n;
+
 // ── Pure decision ──────────────────────────────────────────────────────────
 
 export function sweepInvoice(ctx: SweepContext): SweepDecision {
@@ -81,6 +84,7 @@ export async function processSweeps(): Promise<number> {
     .limit(100);
 
   let swept = 0;
+  const hotSigner = tron.hotSigner();
 
   for (const inv of toSweep) {
     const address = inv.depositAddress;
@@ -155,6 +159,28 @@ export async function processSweeps(): Promise<number> {
 
       if (updated.rowCount === 0) {
         console.error(`sweep: race on ${inv.id} — already swept`);
+      }
+
+      // Return excess TRX from deposit address back to hot wallet
+      // (keep KEEP_TRX_ON_DEPOSIT_SUN for future USDT transfers)
+      if (trxBalanceSun > KEEP_TRX_ON_DEPOSIT_SUN) {
+        const returnAmount = trxBalanceSun - KEEP_TRX_ON_DEPOSIT_SUN;
+        const depositSigner = tron.signerForIndex(inv.derivIndex);
+        try {
+          const returnTx = await tron.sendTrx({
+            fromAddress: address,
+            toAddress: hotSigner.address,
+            amountSun: returnAmount,
+            signer: depositSigner,
+          });
+          console.log(
+            `sweep: returned ${returnAmount} TRX from ${address} to hot wallet: ${returnTx.txHash}`,
+          );
+        } catch (returnErr) {
+          console.error(
+            `sweep: failed to return TRX from ${address}: ${returnErr}`,
+          );
+        }
       }
 
       swept++;

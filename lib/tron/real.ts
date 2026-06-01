@@ -2,7 +2,7 @@ import { HDKey } from "@scure/bip32";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { sha256 } from "@noble/hashes/sha256";
-import { hexToBytes, bytesToHex } from "@noble/hashes/utils";
+import { hexToBytes, bytesToHex, concatBytes } from "@noble/hashes/utils";
 import { base58check } from "@scure/base";
 import type { TronService, UsdtTransfer, Signer } from "./types";
 
@@ -181,6 +181,9 @@ export function createRealTron(opts: RealTronOpts): TronService {
   ): Signer {
     return {
       address,
+      async privateKeyHex() {
+        return privateKeyHex;
+      },
       async sign(rawTx: unknown): Promise<{ txId: string }> {
         const tw = await _getTronWeb();
         // tronWeb.trx.sign expects a raw transaction object
@@ -274,6 +277,118 @@ export function createRealTron(opts: RealTronOpts): TronService {
   }
 
   // -----------------------------------------------------------------------
+  // USDT transfer via raw broadcasthex (avoids tronweb's broken broadcast)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Build, sign, and broadcast a USDT TRC20 transfer as a raw hex transaction.
+   * Uses @noble/curves for signing (same keys as TronWeb but more reliable
+   * broadcast delivery).
+   */
+  async function rawUsdtTransfer(
+    privateKeyHex: string,
+    fromAddress: string,
+    toAddress: string,
+    amount: string,
+  ): Promise<{ txHash: string }> {
+    const tw = await _getTronWeb();
+    const atomicAmount = usdtToAtomic(amount);
+
+    // 1. Build the unsigned triggerSmartContract via tronweb (reliable builder)
+    const built = await tw.transactionBuilder.triggerSmartContract(
+      USDT_CONTRACT,
+      "transfer(address,uint256)",
+      { feeLimit: 100_000_000, callValue: 0 }, // 100 TRX fee limit
+      [
+        { type: "address", value: toAddress },
+        { type: "uint256", value: atomicAmount.toString() },
+      ],
+      fromAddress,
+    );
+
+    const tx = built.transaction as Record<string, unknown>;
+
+    // 2. Ensure we have the ref_block_bytes, ref_block_num, etc.
+    //    TronWeb should set these already via triggerSmartContract.
+    //    Add a reasonable expiration if missing.
+    if (!tx.expiration) {
+      tx.expiration = (Math.floor(Date.now()) + 60_000) * 1000; // +60s in ms
+    }
+
+    // 3. Serialize as JSON + compute raw_data_hex
+    const rawData = {
+      contract: tx.raw_data?.contract ?? tx.raw_data?.contracts ?? [],
+      ref_block_bytes: tx.raw_data?.ref_block_bytes ?? "0000",
+      ref_block_hash: tx.raw_data?.ref_block_hash ?? "0000000000000000",
+      expiration: tx.expiration ?? (Math.floor(Date.now()) + 60_000) * 1000,
+      timestamp: tx.raw_data?.timestamp ?? Date.now(),
+    };
+    // Keep original raw_data structure if it exists
+    const rawDataJson = tx.raw_data
+      ? JSON.stringify(tx.raw_data)
+      : JSON.stringify(rawData);
+
+    // 4. Hash raw_data with sha256
+    const rawDataBytes = new TextEncoder().encode(rawDataJson);
+    const hash = sha256(rawDataBytes);
+
+    // 5. Sign with secp256k1
+    const pkBytes = hexToBytes(privateKeyHex.replace(/^0x/, ""));
+    const sig = secp256k1.sign(hash, pkBytes);
+    const sigBytes = sig.toDERRawBytes();
+
+    // 6. Construct the full signed transaction for broadcasthex
+    const signedTx: Record<string, unknown> = {
+      ...tx,
+      signature: [bytesToHex(sigBytes)],
+    };
+
+    // 7. Broadcast via wallet/broadcasthex (raw hex endpoint)
+    const broadcastBody = JSON.stringify({ transaction: signedTx });
+    const broadcastUrl = `${TRONGRID_BASE}/wallet/broadcasthex`;
+    const br = await fetchWithTimeout(
+      broadcastUrl,
+      {
+        method: "POST",
+        headers: {
+          "TRON-PRO-API-KEY": opts.apiKey,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: broadcastBody,
+      },
+      30_000,
+    );
+
+    if (!br.ok) {
+      const errBody = await br.text().catch(() => "");
+      throw new Error(`broadcasthex failed ${br.status}: ${errBody}`);
+    }
+
+    const result = (await br.json()) as {
+      result?: boolean;
+      code?: string;
+      message?: string;
+      txid?: string;
+    };
+
+    if (result.result === false) {
+      throw new Error(
+        `broadcasthex rejected: code=${result.code ?? "?"} message=${result.message ?? "?"}`,
+      );
+    }
+
+    const txHash = result.txid ?? "";
+    if (!txHash) {
+      throw new Error(
+        `broadcasthex response missing txid: ${JSON.stringify(result)}`,
+      );
+    }
+
+    return { txHash };
+  }
+
+  // -----------------------------------------------------------------------
   // TronService implementation
   // -----------------------------------------------------------------------
 
@@ -348,25 +463,13 @@ export function createRealTron(opts: RealTronOpts): TronService {
     },
 
     async sendUsdt({ fromAddress, toAddress, amount, signer }) {
-      const tw = await _getTronWeb();
-      const atomicAmount = usdtToAtomic(amount);
-
-      const tx = await tw.transactionBuilder.triggerSmartContract(
-        USDT_CONTRACT,
-        "transfer(address,uint256)",
-        {
-          feeLimit: 50_000_000, // 50 TRX max gas (keep low to save energy)
-          callValue: 0,
-        },
-        [
-          { type: "address", value: toAddress },
-          { type: "uint256", value: atomicAmount.toString() },
-        ],
+      // Use raw broadcasthex — more reliable than tronweb's broadcast
+      return rawUsdtTransfer(
+        await signer.privateKeyHex(),
         fromAddress,
+        toAddress,
+        amount,
       );
-
-      const signedTx = await signer.sign(tx.transaction);
-      return broadcastAndWait(signedTx);
     },
 
     async sendTrx({ fromAddress, toAddress, amountSun, signer }) {
