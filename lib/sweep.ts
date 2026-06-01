@@ -23,7 +23,7 @@ export interface SweepDecision {
 }
 
 // Minimum TRX needed on a deposit address to execute a USDT TRC20 transfer.
-export const DEFAULT_TRX_FOR_TRANSFER_SUN = 2_000_000n;
+export const DEFAULT_TRX_FOR_TRANSFER_SUN = 1_000_000n;
 
 // ── Pure decision ──────────────────────────────────────────────────────────
 

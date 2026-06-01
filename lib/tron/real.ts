@@ -355,7 +355,7 @@ export function createRealTron(opts: RealTronOpts): TronService {
         USDT_CONTRACT,
         "transfer(address,uint256)",
         {
-          feeLimit: 150_000_000, // 150 TRX max gas
+          feeLimit: 50_000_000, // 50 TRX max gas (keep low to save energy)
           callValue: 0,
         },
         [
