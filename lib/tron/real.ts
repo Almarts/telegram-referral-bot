@@ -301,7 +301,7 @@ export function createRealTron(opts: RealTronOpts): TronService {
     const built: any = await tw.transactionBuilder.triggerConstantContract(
       usdtHex,
       "transfer(address,uint256)",
-      { feeLimit: 100_000_000 },
+      { feeLimit: 18_000_000 },
       [
         { type: "address", value: toAddress },
         { type: "uint256", value: atomicAmount.toString() },
