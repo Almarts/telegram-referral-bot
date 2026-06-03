@@ -1,0 +1,112 @@
+import { getBot } from "@/bot/bot";
+import { getDb } from "@/db/client";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { getEnv } from "@/lib/env";
+import type { Context } from "grammy";
+
+/**
+ * /add_creator @username <creator_ref_code>
+ *
+ * Admin-only: sets user role to "creator", links them to a referrer,
+ * and grants channel access.
+ */
+export async function handleAddCreator(ctx: Context): Promise<void> {
+  const tgUser = ctx.from;
+  if (!tgUser) return;
+
+  // Parse args: /add_creator @username REFCODE
+  const text = ctx.message?.text ?? "";
+  const parts = text.split(/\s+/);
+
+  if (parts.length < 3) {
+    await ctx.reply(
+      "Usage: /add_creator @username REFCODE\n" +
+        "Example: /add_creator @some_user ABC123",
+    );
+    return;
+  }
+
+  const targetUsername = parts[1].replace(/^@/, "");
+  const creatorRefCode = parts[2].toUpperCase();
+
+  const db = getDb();
+  const bot = getBot();
+  const channelId = getEnv().DEFAULT_CHANNEL_ID;
+
+  try {
+    // 1. Find the target user by tg_username
+    const targetUser = await db
+      .select({ id: users.id, tgUserId: users.tgUserId, role: users.role })
+      .from(users)
+      .where(eq(users.tgUsername, targetUsername))
+      .limit(1)
+      .then((r) => r[0] ?? null);
+
+    if (!targetUser) {
+      await ctx.reply(`User @${targetUsername} not found in database. They need to /start the bot first.`);
+      return;
+    }
+
+    if (targetUser.role === "creator") {
+      await ctx.reply(`@${targetUsername} is already a creator.`);
+      return;
+    }
+
+    // 2. Verify the referrer ref_code exists
+    const referrer = await db
+      .select({ id: users.id, refCode: users.refCode })
+      .from(users)
+      .where(eq(users.refCode, creatorRefCode))
+      .limit(1)
+      .then((r) => r[0] ?? null);
+
+    if (!referrer) {
+      await ctx.reply(`Referrer ref_code "${creatorRefCode}" not found.`);
+      return;
+    }
+
+    // 3. Update user: role=creator, parent_ref_code=creatorRefCode
+    await db
+      .update(users)
+      .set({
+        role: "creator",
+        parentRefCode: creatorRefCode,
+      })
+      .where(eq(users.id, targetUser.id));
+
+    // 4. Grant channel access (create invite link)
+    const invite = await bot.api.createChatInviteLink(Number(channelId), {
+      member_limit: 1,
+      expire_date: Math.floor(Date.now() / 1000) + 3600, // 1 hour
+    });
+
+    // 5. Send invite to the new creator via DM
+    const message = [
+      `🎉 You've been granted access as a *creator*!`,
+      "",
+      `Here's your invite link to the channel:`,
+      invite.invite_link,
+      "",
+      `Your referral code: \`${targetUser.refCode || "N/A"}\``,
+      "",
+      `You earn: 30% per referral (50% after 10), 10% L2.`,
+    ].join("\n");
+
+    await bot.api.sendMessage(Number(targetUser.tgUserId), message, {
+      parse_mode: "Markdown",
+    });
+
+    // 6. Confirm to admin
+    await ctx.reply(
+      `✅ @${targetUsername} is now a *creator*.\n` +
+        `Parent ref: ${creatorRefCode}\n` +
+        `Invite link sent to @${targetUsername}.\n\n` +
+        `You can now DM them with training materials.`,
+      { parse_mode: "Markdown" },
+    );
+  } catch (err) {
+    console.error("add_creator error:", err);
+    await ctx.reply("❌ Error adding creator. Check logs.");
+  }
+}

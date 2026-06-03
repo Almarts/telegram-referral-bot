@@ -64,6 +64,7 @@ export const users = pgTable(
     payoutAddressChangedAt: timestamp("payout_address_changed_at", {
       withTimezone: true,
     }),
+    role: text("role").notNull().default("regular"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

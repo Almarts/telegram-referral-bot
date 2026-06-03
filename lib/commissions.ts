@@ -97,7 +97,7 @@ export async function accrueCommissions(invoiceId: string): Promise<void> {
 
   if (!l1) return;
 
-  // 4. Load commission config
+  // 4. Load commission config (for creator tiers)
   const config = await db
     .select()
     .from(commissionConfig)
@@ -106,23 +106,40 @@ export async function accrueCommissions(invoiceId: string): Promise<void> {
 
   if (!config) return;
 
-  // 5. Compute L1's lifetime paid invoice count (excluding this invoice)
-  const l1Count = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(invoices)
-    .innerJoin(users, eq(users.id, invoices.userId))
-    .where(
-      and(
-        eq(users.parentRefCode, l1.refCode!),
-        eq(invoices.status, "paid"),
-        sql`${invoices.id} != ${invoiceId}`,
-      ),
-    )
-    .then((r) => r[0]?.count ?? 0);
+  // 5. Determine L1's role (regular → 20% flat, creator → tier-based)
+  const l1Role = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, l1.id))
+    .limit(1)
+    .then((r) => r[0]?.role ?? "regular");
 
-  // 6. Compute L1 commission
-  const l1Tier = pickTier(config.l1Tiers as TierConfig[], l1Count);
-  const l1Amount = computeCommissionAmount(invoice.amountUsdt, l1Tier.bps);
+  let l1Amount: string;
+  let l1Bps: number;
+
+  if (l1Role === "creator") {
+    // Creator: use tier system from config
+    const l1Count = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(invoices)
+      .innerJoin(users, eq(users.id, invoices.userId))
+      .where(
+        and(
+          eq(users.parentRefCode, l1.refCode!),
+          eq(invoices.status, "paid"),
+          sql`${invoices.id} != ${invoiceId}`,
+        ),
+      )
+      .then((r) => r[0]?.count ?? 0);
+
+    const l1Tier = pickTier(config.l1Tiers as TierConfig[], l1Count);
+    l1Bps = l1Tier.bps;
+    l1Amount = computeCommissionAmount(invoice.amountUsdt, l1Bps);
+  } else {
+    // Regular user: flat 20%
+    l1Bps = 2000;
+    l1Amount = computeCommissionAmount(invoice.amountUsdt, 2000);
+  }
   const unlockAt =
     config.payoutMode === "instant"
       ? (invoice.paidAt ?? new Date())
@@ -138,15 +155,15 @@ export async function accrueCommissions(invoiceId: string): Promise<void> {
     beneficiaryId: l1.id,
     level: 1,
     basisUsdt: invoice.amountUsdt,
-    rateBps: l1Tier.bps,
+    rateBps: l1Bps,
     amountUsdt: l1Amount,
     unlockAt,
     status: "accrued",
   });
   if (!l1Inserted) return;
 
-  // 7. L2 cascade
-  if (l1.parentRefCode) {
+  // 7. L2 cascade — only for creators
+  if (l1Role === "creator" && l1.parentRefCode) {
     const l2 = await db
       .select({ id: users.id })
       .from(users)

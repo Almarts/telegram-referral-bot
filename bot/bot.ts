@@ -11,6 +11,7 @@ import {
 } from "./handlers/payout_address";
 import { handleWithdrawNow } from "./handlers/withdraw_now";
 import { handleAdminStats } from "./handlers/admin_stats";
+import { handleAddCreator } from "./handlers/add_creator";
 import { adminOnly } from "./middleware/admin_only";
 import { onboardUser } from "./services/onboarding";
 import { getEnv } from "@/lib/env";
@@ -45,6 +46,7 @@ export function createBot(token: string): Bot<Context> {
 
   // Admin (gated by ADMIN_TG_IDS)
   bot.command("admin", adminOnly, handleAdminStats);
+  bot.command("add_creator", adminOnly, handleAddCreator);
 
   // Payout address conversation: intercept text messages when in awaiting state
   bot.on("message:text", async (ctx) => {
