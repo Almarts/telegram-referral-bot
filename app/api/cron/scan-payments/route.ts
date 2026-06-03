@@ -44,7 +44,7 @@ export async function GET(req: Request): Promise<Response> {
       }
 
       // Accrue commissions after settlement (idempotent by UNIQUE constraint)
-      accrueCommissions(result.invoiceId).catch((err) =>
+      await accrueCommissions(result.invoiceId).catch((err) =>
         console.error("commissions:", err),
       );
     }
