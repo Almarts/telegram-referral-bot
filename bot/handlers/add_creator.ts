@@ -37,7 +37,7 @@ export async function handleAddCreator(ctx: Context): Promise<void> {
   try {
     // 1. Find the target user by tg_username
     const targetUser = await db
-      .select({ id: users.id, tgUserId: users.tgUserId, role: users.role })
+      .select({ id: users.id, tgUserId: users.tgUserId, role: users.role, refCode: users.refCode })
       .from(users)
       .where(eq(users.tgUsername, targetUsername))
       .limit(1)
