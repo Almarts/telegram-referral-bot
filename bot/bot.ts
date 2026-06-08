@@ -12,6 +12,10 @@ import {
 import { handleWithdrawNow } from "./handlers/withdraw_now";
 import { handleAdminStats } from "./handlers/admin_stats";
 import { handleAddCreator } from "./handlers/add_creator";
+import { handleDashboard, handleDashboardCallback } from "./handlers/admin_dashboard";
+import { handleSubs } from "./handlers/admin_subs";
+import { handleFinance } from "./handlers/admin_finance";
+import { handleTree } from "./handlers/admin_tree";
 import { adminOnly } from "./middleware/admin_only";
 import { onboardUser } from "./services/onboarding";
 import { getEnv } from "@/lib/env";
@@ -47,6 +51,10 @@ export function createBot(token: string): Bot<Context> {
   // Admin (gated by ADMIN_TG_IDS)
   bot.command("admin", adminOnly, handleAdminStats);
   bot.command("add_creator", adminOnly, handleAddCreator);
+  bot.command("dashboard", adminOnly, handleDashboard);
+  bot.command("subs", adminOnly, handleSubs);
+  bot.command("finance", adminOnly, handleFinance);
+  bot.command("tree", adminOnly, handleTree);
 
   // Payout address conversation: intercept text messages when in awaiting state
   bot.on("message:text", async (ctx) => {
@@ -69,6 +77,8 @@ export function createBot(token: string): Bot<Context> {
       await handleCheckCallback(ctx);
     } else if (data === "withdraw_now") {
       await handleWithdrawNow(ctx);
+    } else if (data.startsWith("admin:")) {
+      await handleDashboardCallback(ctx);
     }
   });
 

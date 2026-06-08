@@ -1,4 +1,7 @@
-import { getDb } from "@/db/client";
+// Override do-sweep to send small test amount first
+const fs = await import('fs');
+
+const content = `import { getDb } from "@/db/client";
 import { invoices } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getTron } from "@/lib/tron";
@@ -57,7 +60,7 @@ export async function GET(): Promise<Response> {
     // Wait and check if it lands
     await new Promise(r => setTimeout(r, 8000));
     
-    const checkUrl = `https://api.trongrid.io/v1/transactions/${tx.txHash}`;
+    const checkUrl = \`https://api.trongrid.io/v1/transactions/\${tx.txHash}\`;
     const checkRes = await fetch(checkUrl, { headers: { Accept: "application/json" } });
     const checkBody = await checkRes.json();
     const exists = Array.isArray(checkBody.data) && checkBody.data.length > 0;
@@ -82,3 +85,11 @@ export async function GET(): Promise<Response> {
     coldUsdt: await tron.usdtBalance(coldAddress),
   }, null, 2), { status: 200, headers: { "Content-Type": "application/json" } });
 }
+`;
+
+await fs.promises.writeFile(
+  'C:/Users/marts/projects/telegram-referral-bot-main/app/api/do-sweep/route.ts',
+  content,
+  'utf8'
+);
+console.log('Written');
