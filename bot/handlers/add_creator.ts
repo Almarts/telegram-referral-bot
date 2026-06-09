@@ -6,29 +6,41 @@ import { getEnv } from "@/lib/env";
 import type { Context } from "grammy";
 
 /**
- * /add_creator @username <creator_ref_code>
+ * /add_creator @username <creator_ref_code> [vip_bps]
  *
  * Admin-only: sets user role to "creator", links them to a referrer,
  * and grants channel access.
+ *
+ * Optional vip_bps: if provided (e.g. 5000), creator gets a fixed commission
+ * rate regardless of tier progression. 5000 = 50%.
+ * Example: /add_creator @big_blogger ABC123 5000  → 50% immediately
  */
 export async function handleAddCreator(ctx: Context): Promise<void> {
   const tgUser = ctx.from;
   if (!tgUser) return;
 
-  // Parse args: /add_creator @username REFCODE
+  // Parse args: /add_creator @username REFCODE [vip_bps]
   const text = ctx.message?.text ?? "";
   const parts = text.split(/\s+/);
 
   if (parts.length < 3) {
     await ctx.reply(
-      "Usage: /add_creator @username REFCODE\n" +
-        "Example: /add_creator @some_user ABC123",
+      "Usage: /add_creator @username REFCODE [vip_bps]\n" +
+        "Examples:\n" +
+        "  /add_creator @some_user ABC123\n" +
+        "  /add_creator @big_blogger ABC123 5000",
     );
     return;
   }
 
   const targetUsername = parts[1].replace(/^@/, "");
   const creatorRefCode = parts[2].toUpperCase();
+  const vipBps = parts[3] ? parseInt(parts[3], 10) : null;
+
+  if (vipBps !== null && (isNaN(vipBps) || vipBps < 0 || vipBps > 10000)) {
+    await ctx.reply("vip_bps must be between 0 and 10000 (e.g. 5000 = 50%).");
+    return;
+  }
 
   const db = getDb();
   const bot = getBot();
@@ -66,12 +78,13 @@ export async function handleAddCreator(ctx: Context): Promise<void> {
       return;
     }
 
-    // 3. Update user: role=creator, parent_ref_code=creatorRefCode
+    // 3. Update user: role=creator, parent_ref_code=creatorRefCode, optional vip_bps
     await db
       .update(users)
       .set({
         role: "creator",
         parentRefCode: creatorRefCode,
+        vipBps: vipBps ?? null,
       })
       .where(eq(users.id, targetUser.id));
 
@@ -82,13 +95,9 @@ export async function handleAddCreator(ctx: Context): Promise<void> {
     });
 
     // 5. Send invite to the new creator via DM
-    const inviteMsg = [
-      `🎉 Welcome to the creator program!`,
-      "",
-      `Your referral code: ${targetUser.refCode || "N/A"}`,
-      "",
-      `You earn: 30% per referral (50% after 10), 10% L2.`,
-    ].join("\n");
+    const commissionText = vipBps
+      ? `You earn: ${(vipBps / 100).toFixed(0)}% per referral, 10% L2.`
+      : "You earn: 30% per referral (50% after 10), 10% L2.";
 
     const fullInviteMsg = [
       `🎉 Welcome to the creator program!`,
@@ -97,7 +106,7 @@ export async function handleAddCreator(ctx: Context): Promise<void> {
       "",
       `Your referral code: ${targetUser.refCode || "N/A"}`,
       "",
-      `You earn: 30% per referral (50% after 10), 10% L2.`,
+      commissionText,
     ].join("\n");
 
     await bot.api.sendMessage(Number(targetUser.tgUserId), fullInviteMsg, {
@@ -112,10 +121,9 @@ export async function handleAddCreator(ctx: Context): Promise<void> {
 
     // 6. Confirm to admin
     const adminMsg =
-      `✅ @${targetUsername} is now a *creator*.\n` +
+      `✅ @${targetUsername} is now a *creator*.${vipBps ? ` (VIP: ${(vipBps / 100).toFixed(0)}%)` : ""}\n` +
       `Parent ref: ${creatorRefCode}\n` +
-      `Invite link sent to @${targetUsername}.\n\n` +
-      `You can now DM them with training materials.`;
+      `Invite link sent to @${targetUsername}.`;
     await ctx.reply(adminMsg, { parse_mode: "Markdown" }).catch(async (err) => {
       console.error("addCreator: admin confirm Markdown:", err.message);
       await ctx.reply(adminMsg.replace(/\*/g, ""));

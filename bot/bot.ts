@@ -1,5 +1,4 @@
-import { Bot } from "grammy";
-import type { Context } from "grammy";
+import { Bot, Context } from "grammy";
 import { handleStart } from "./handlers/start";
 import { handleBuy, handleBuyCallback, handleCheckCallback } from "./handlers/buy";
 import { handleRenew } from "./handlers/renew";
@@ -17,6 +16,7 @@ import { handleSubs } from "./handlers/admin_subs";
 import { handleFinance } from "./handlers/admin_finance";
 import { handleTree } from "./handlers/admin_tree";
 import { adminOnly } from "./middleware/admin_only";
+import { creatorOnly } from "./middleware/creator_only";
 import { onboardUser } from "./services/onboarding";
 import { getEnv } from "@/lib/env";
 
@@ -39,14 +39,14 @@ export function createBot(token: string): Bot<Context> {
   bot.command("buy", handleBuy);
   bot.command("renew", handleRenew);
 
-  // Text-based menu handlers
-  bot.hears("My referrals", handleMyReferrals);
-  bot.hears("Earnings", handleEarnings);
-  bot.hears("Set payout address", handleSetPayoutAddress);
+  // Text-based menu handlers — only for creators
+  bot.hears("My referrals", creatorOnly, handleMyReferrals);
+  bot.hears("Earnings", creatorOnly, handleEarnings);
+  bot.hears("Set payout address", creatorOnly, handleSetPayoutAddress);
   bot.hears("Buy access", handleBuy);
 
-  // Withdraw command
-  bot.command("withdraw", handleWithdrawNow);
+  // Withdraw command — only for creators
+  bot.command("withdraw", creatorOnly, handleWithdrawNow);
 
   // Admin (gated by ADMIN_TG_IDS)
   bot.command("admin", adminOnly, handleAdminStats);

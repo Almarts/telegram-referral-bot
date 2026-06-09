@@ -106,18 +106,28 @@ export async function accrueCommissions(invoiceId: string): Promise<void> {
 
   if (!config) return;
 
-  // 5. Determine L1's role (regular → 20% flat, creator → tier-based)
-  const l1Role = await db
-    .select({ role: users.role })
+  // 5. Determine L1's role and VIP status
+  const l1User = await db
+    .select({ role: users.role, vipBps: users.vipBps })
     .from(users)
     .where(eq(users.id, l1.id))
     .limit(1)
-    .then((r) => r[0]?.role ?? "regular");
+    .then((r) => r[0] ?? null);
+  const l1Role = l1User?.role ?? "regular";
+  const vipBps = l1User?.vipBps ?? null;
 
   let l1Amount: string;
   let l1Bps: number;
 
-  if (l1Role === "creator") {
+  if (l1Role !== "creator") {
+    // Regular user: no referral commissions
+    l1Bps = 0;
+    l1Amount = "0";
+  } else if (vipBps !== null) {
+    // VIP creator: fixed bps regardless of tier
+    l1Bps = vipBps;
+    l1Amount = computeCommissionAmount(invoice.amountUsdt, l1Bps);
+  } else {
     // Creator: use tier system from config
     const l1Count = await db
       .select({ count: sql<number>`count(*)::int` })
@@ -135,10 +145,6 @@ export async function accrueCommissions(invoiceId: string): Promise<void> {
     const l1Tier = pickTier(config.l1Tiers as TierConfig[], l1Count);
     l1Bps = l1Tier.bps;
     l1Amount = computeCommissionAmount(invoice.amountUsdt, l1Bps);
-  } else {
-    // Regular user: flat 20%
-    l1Bps = 2000;
-    l1Amount = computeCommissionAmount(invoice.amountUsdt, 2000);
   }
   const unlockAt =
     config.payoutMode === "instant"

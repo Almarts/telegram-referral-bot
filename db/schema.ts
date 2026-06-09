@@ -65,6 +65,7 @@ export const users = pgTable(
       withTimezone: true,
     }),
     role: text("role").notNull().default("regular"),
+    vipBps: integer("vip_bps"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
