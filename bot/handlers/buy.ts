@@ -107,27 +107,37 @@ export async function handleBuyCallback(ctx: Context): Promise<void> {
   try {
     const invoice = await createInvoice({ userId: user.id, planId });
 
-    await ctx.reply(
-      [
-        `*Plan:* ${invoice.planName}`,
-        `*Amount:* ${invoice.amountUsdt} USDT`,
-        "",
-        `Send exactly *${invoice.amountUsdt} USDT* to:`,
-        "`" + invoice.depositAddress + "`",
-        "",
-        `Expires: ${invoice.expiresAt.toISOString().replace("T", " ").slice(0, 16)} UTC`,
-        "",
-        "After sending, tap I've paid.",
-      ].join("\n"),
-      {
-        parse_mode: "Markdown",
+    // Build message without Markdown to avoid parse errors with dynamic addresses
+    const msgLines = [
+      `*Plan:* ${invoice.planName}`,
+      `*Amount:* ${invoice.amountUsdt} USDT`,
+      "",
+      `Send exactly ${invoice.amountUsdt} USDT to:`,
+      invoice.depositAddress,
+      "",
+      `Expires: ${invoice.expiresAt.toISOString().replace("T", " ").slice(0, 16)} UTC`,
+      "",
+      "After sending, tap I've paid.",
+    ];
+    const msgText = msgLines.join("\n");
+
+    await ctx.reply(msgText, {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "I've paid", callback_data: `check:${invoice.id}` }],
+        ],
+      },
+    }).catch(async (err) => {
+      console.error("handleBuyCallback: Markdown reply failed, falling back to plain text:", err.message);
+      await ctx.reply(msgText.replace(/\*/g, ""), {
         reply_markup: {
           inline_keyboard: [
             [{ text: "I've paid", callback_data: `check:${invoice.id}` }],
           ],
         },
-      },
-    );
+      });
+    });
 
     await ctx.answerCallbackQuery({ text: "Invoice created." });
   } catch (err) {
@@ -176,7 +186,13 @@ export async function handleCheckCallback(ctx: Context): Promise<void> {
         await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
           inviteLink: invite.invite_link,
           planName: result.planName || "Subscription",
-        }), { parse_mode: "Markdown" });
+        }), { parse_mode: "Markdown" }).catch(async (err) => {
+          console.error("handleCheckCallback: invite DM Markdown failed:", err.message);
+          await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
+            inviteLink: invite.invite_link,
+            planName: result.planName || "Subscription",
+          }).replace(/\*/g, ""));
+        });
       }
       return;
     }
@@ -220,7 +236,13 @@ export async function handleCheckCallback(ctx: Context): Promise<void> {
         await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
           inviteLink: invite.invite_link,
           planName: plan?.name || "Subscription",
-        }), { parse_mode: "Markdown" });
+        }), { parse_mode: "Markdown" }).catch(async (err) => {
+          console.error("handleCheckCallback: invite DM Markdown failed (paid path):", err.message);
+          await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
+            inviteLink: invite.invite_link,
+            planName: plan?.name || "Subscription",
+          }).replace(/\*/g, ""));
+        });
       }
       return;
     }

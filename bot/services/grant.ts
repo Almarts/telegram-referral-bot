@@ -3,6 +3,7 @@ import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
+import { safeReply } from "@/bot/utils/safe-reply";
 
 // ── Pure formatting (no API calls, independently testable) ──────────────────
 
@@ -79,8 +80,13 @@ export async function grantChannelAccess(params: GrantParams): Promise<void> {
       planName: params.planName,
     });
 
+    // Use safeReply-like approach: send as plain text since invite links may contain _ etc.
     await bot.api.sendMessage(Number(tgUserId), message, {
       parse_mode: "Markdown",
+    }).catch(async (err) => {
+      console.error("grantChannelAccess: Markdown send failed, sending plain text:", err.message);
+      const plain = message.replace(/\*/g, "").replace(/_/g, "");
+      await bot.api.sendMessage(Number(tgUserId), plain);
     });
 
     console.log("grantChannelAccess SUCCESS for user", tgUserId, "link:", invite.invite_link);

@@ -70,16 +70,20 @@ export async function handleWithdrawNow(ctx: Context): Promise<void> {
   }
 
   // Show status — actual payout is handled by the payout-queue cron
-  await ctx.reply(
-    [
-      `Available for withdrawal: ${summary.payableUsdt} USDT`,
-      `Lifetime earned: ${summary.lifetimeUsdt} USDT`,
-      "",
-      "Your payout will be processed automatically by the next payout cycle.",
-      `Payouts are batched and sent every 5 minutes.`,
-      "",
-      `Payout address: \`${user.payoutAddress}\``,
-    ].join("\n"),
-    { parse_mode: "Markdown" },
-  );
+  const wdText = [
+    `Available for withdrawal: ${summary.payableUsdt} USDT`,
+    `Lifetime earned: ${summary.lifetimeUsdt} USDT`,
+    "",
+    "Your payout will be processed automatically by the next payout cycle.",
+    `Payouts are batched and sent every 5 minutes.`,
+    "",
+    `Payout address: ${user.payoutAddress}`,
+  ].join("\n");
+
+  await ctx.reply(wdText, {
+    parse_mode: "Markdown",
+  }).catch(async (err) => {
+    console.error("handleWithdrawNow: Markdown failed:", err.message);
+    await ctx.reply(wdText.replace(/\*/g, ""));
+  });
 }

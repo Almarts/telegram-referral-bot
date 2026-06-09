@@ -97,7 +97,7 @@ export async function handleFinance(ctx: Context): Promise<void> {
   lines.push("");
   lines.push("*Commissions:*");
   lines.push(`  Available to pay: *${pendingPayouts.total} USDT* (${pendingPayouts.count} rows)`);
-  lines.push(`  Paid out: *${totalPaidOut} USDT*`);
+  lines.push(`  Paid out: *${totalPaid} USDT*`);
 
   lines.push("");
   lines.push("*Hot wallet:*");

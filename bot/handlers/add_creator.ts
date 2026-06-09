@@ -82,29 +82,44 @@ export async function handleAddCreator(ctx: Context): Promise<void> {
     });
 
     // 5. Send invite to the new creator via DM
-    const message = [
-      `🎉 You've been granted access as a *creator*!`,
+    const inviteMsg = [
+      `🎉 Welcome to the creator program!`,
       "",
-      `Here's your invite link to the channel:`,
-      invite.invite_link,
-      "",
-      `Your referral code: \`${targetUser.refCode || "N/A"}\``,
+      `Your referral code: ${targetUser.refCode || "N/A"}`,
       "",
       `You earn: 30% per referral (50% after 10), 10% L2.`,
     ].join("\n");
 
-    await bot.api.sendMessage(Number(targetUser.tgUserId), message, {
+    const fullInviteMsg = [
+      `🎉 Welcome to the creator program!`,
+      "",
+      `Here is the channel: ${invite.invite_link}`,
+      "",
+      `Your referral code: ${targetUser.refCode || "N/A"}`,
+      "",
+      `You earn: 30% per referral (50% after 10), 10% L2.`,
+    ].join("\n");
+
+    await bot.api.sendMessage(Number(targetUser.tgUserId), fullInviteMsg, {
       parse_mode: "Markdown",
+    }).catch(async (err) => {
+      console.error("addCreator: DM Markdown failed:", err.message);
+      await bot.api.sendMessage(
+        Number(targetUser.tgUserId),
+        fullInviteMsg.replace(/\*/g, ""),
+      );
     });
 
     // 6. Confirm to admin
-    await ctx.reply(
+    const adminMsg =
       `✅ @${targetUsername} is now a *creator*.\n` +
-        `Parent ref: ${creatorRefCode}\n` +
-        `Invite link sent to @${targetUsername}.\n\n` +
-        `You can now DM them with training materials.`,
-      { parse_mode: "Markdown" },
-    );
+      `Parent ref: ${creatorRefCode}\n` +
+      `Invite link sent to @${targetUsername}.\n\n` +
+      `You can now DM them with training materials.`;
+    await ctx.reply(adminMsg, { parse_mode: "Markdown" }).catch(async (err) => {
+      console.error("addCreator: admin confirm Markdown:", err.message);
+      await ctx.reply(adminMsg.replace(/\*/g, ""));
+    });
   } catch (err) {
     console.error("add_creator error:", err);
     await ctx.reply("❌ Error adding creator. Check logs.");
