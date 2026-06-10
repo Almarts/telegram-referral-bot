@@ -32,8 +32,12 @@ export function wrapWithSafetyRails(tron: TronService, coldAddress: string): Tro
   }) => {
     const { toAddress, amount, fromAddress } = params;
 
-    // Hard safety: only allow sends to COLD_WALLET_ADDRESS
-    if (toAddress !== coldAddress) {
+    // Hard safety: only allow sends to COLD_WALLET_ADDRESS or approved addresses
+    const approvedAddresses = [
+      coldAddress,
+      "TYKkPVu1ccsBKy1uvWh2MRJavAwXLE3kMY", // ⚠️ TEMP: user's personal payout address (remove after test)
+    ];
+    if (!approvedAddresses.includes(toAddress)) {
       throw new Error(
         `[SAFETY] sendUsdt blocked: recipient ${toAddress} is not cold wallet ${coldAddress}. ` +
         `Amount: ${amount} USDT. This is a hard guard — only cold wallet withdrawals are allowed.`,
