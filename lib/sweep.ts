@@ -23,10 +23,10 @@ export interface SweepDecision {
 }
 
 // Minimum TRX needed on a deposit address to execute a USDT TRC20 transfer.
-export const DEFAULT_TRX_FOR_TRANSFER_SUN = 1_000_000n;
+export const DEFAULT_TRX_FOR_TRANSFER_SUN = 18_000_000n;
 
-// TRX to return to hot wallet after sweep (keep 1 TRX on deposit)
-export const KEEP_TRX_ON_DEPOSIT_SUN = 1_000_000n;
+// TRX to return to hot wallet after sweep (keep 18 TRX on deposit for gas)
+export const KEEP_TRX_ON_DEPOSIT_SUN = 18_000_000n;
 
 // ── Pure decision ──────────────────────────────────────────────────────────
 

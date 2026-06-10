@@ -15,6 +15,26 @@ const TRON_ADDRESS_PREFIX = new Uint8Array([0x41]);
 // USDT TRC20 contract address on TRON mainnet
 const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
 
+// =========================================================================
+// SECURITY GUARD: feeLimit MUST be exactly 18 TRX (18_000_000 SUN)
+// =========================================================================
+// DO NOT TOUCH — user lost ~40+ TRX from changes to this value.
+// This constant is the SINGLE SOURCE OF TRUTH. Every USDT transfer below
+// *must* use FEE_LIMIT, not a hardcoded literal.
+// =========================================================================
+const FEE_LIMIT = 18_000_000;
+if (FEE_LIMIT !== 18_000_000) {
+  throw new Error(
+    `SECURITY GUARD: FEE_LIMIT changed from 18_000_000 to ${FEE_LIMIT}. ` +
+    "This has caused real TRX losses. Revert immediately.",
+  );
+}
+
+/**
+ * TRON address validation regex — must be 34 chars starting with 'T'.
+ */
+const TRON_ADDRESS_RE = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
+
 // TronGrid API base URL
 const TRONGRID_BASE = "https://api.trongrid.io";
 
@@ -299,9 +319,9 @@ export function createRealTron(opts: RealTronOpts): TronService {
     // 1. Build via triggerConstantContract (the proven working approach)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const built: any = await tw.transactionBuilder.triggerConstantContract(
-      usdtHex,
-      "transfer(address,uint256)",
-      { feeLimit: 18_000_000 },
+          usdtHex,
+          "transfer(address,uint256)",
+          { feeLimit: FEE_LIMIT }, // HARD-LOCKED — NEVER CHANGE. User lost ~40+ TRX from changes.
       [
         { type: "address", value: toAddress },
         { type: "uint256", value: atomicAmount.toString() },
@@ -311,6 +331,27 @@ export function createRealTron(opts: RealTronOpts): TronService {
 
     if (!built.result?.result) {
       throw new Error(`triggerConstantContract failed: ${JSON.stringify(built)}`);
+    }
+
+    // =====================================================================
+    // PRE-FLIGHT BALANCE CHECK — verify the sender has enough TRX for fees
+    // =====================================================================
+    // Prevents burning TRX on failed USDT transfers (user lost ~40+ TRX).
+    // TRC20 transfers need ~13 TRX for energy when no frozen energy available.
+    // We check: balance >= FEE_LIMIT (18 TRX) to be safe.
+    // =====================================================================
+    const senderBalance = await tronGet<{ balance?: number }>(
+      `/v1/accounts/${fromAddress}`,
+    ).then(
+      (r) => (r as unknown as { data?: Array<{ balance: number }> }).data?.[0]?.balance ?? 0,
+    );
+    const MIN_TRX_FOR_USDT = FEE_LIMIT; // need at least 18 TRX to cover fee_limit + energy
+    if (senderBalance < MIN_TRX_FOR_USDT) {
+      throw new Error(
+        `SECURITY GUARD: sender ${fromAddress} has ${(senderBalance / 1e6).toFixed(2)} TRX, ` +
+        `but needs at least ${(MIN_TRX_FOR_USDT / 1e6).toFixed(0)} TRX for USDT transfer fees. ` +
+        "Insufficient TRX — not sending to avoid burning user funds.",
+      );
     }
 
     const tx = built.transaction;

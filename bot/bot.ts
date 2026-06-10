@@ -55,6 +55,22 @@ export function createBot(token: string): Bot<Context> {
   bot.command("subs", adminOnly, handleSubs);
   bot.command("finance", adminOnly, handleFinance);
   bot.command("tree", adminOnly, handleTree);
+  bot.command("payouts", adminOnly, async (ctx) => {
+    const { getPendingPayouts } = await import("@/lib/payout-approval");
+    const list = getPendingPayouts();
+    if (list.length === 0) {
+      await ctx.reply("No pending payouts right now.", { parse_mode: "Markdown" });
+      return;
+    }
+    const lines = list.map(
+      (p, i) =>
+        `${i + 1}. \`${p.id}\` — ${p.amountUsdt} USDT → \`${p.toAddress.slice(0, 8)}…\` (${Math.floor((Date.now() - p.createdAt) / 1000)}s ago)`,
+    );
+    await ctx.reply(
+      `*Pending payouts:* ${list.length}\n\n${lines.join("\n")}`,
+      { parse_mode: "Markdown" },
+    );
+  });
 
   // Payout address conversation: intercept text messages when in awaiting state
   bot.on("message:text", async (ctx) => {
@@ -79,6 +95,10 @@ export function createBot(token: string): Bot<Context> {
       await handleWithdrawNow(ctx);
     } else if (data.startsWith("admin:")) {
       await handleDashboardCallback(ctx);
+    } else if (data.startsWith("approve:") || data.startsWith("reject:")) {
+      const { handlePayoutCallback } = await import("@/lib/payout-approval");
+      const tron = (await import("@/lib/tron")).getTron();
+      await handlePayoutCallback(ctx, bot, tron);
     }
   });
 

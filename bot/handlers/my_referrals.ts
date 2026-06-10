@@ -44,6 +44,7 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
     "",
     `L2 referrals: ${stats.l2Count}`,
     `L2 lifetime paid invoices: ${stats.l2LifetimePaid}`,
+    `You earn 10% on L2.`,
   );
 
   await ctx.reply(lines.join("\n"));

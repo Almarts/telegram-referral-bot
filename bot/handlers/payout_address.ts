@@ -89,7 +89,7 @@ export async function handlePayoutAddressInput(
     .where(eq(users.id, user.id));
 
   await clearConvState(tgUserId);
-  const paText = `Payout address set to ${addr}. Payouts will be available after a 24-hour cooling-off period.`;
+  const paText = `Payout address set to ${addr}.`;
   await ctx.reply(paText, { parse_mode: "Markdown" }).catch(async (err) => {
     console.error("handlePayoutAddressInput: Markdown failed:", err.message);
     await ctx.reply(paText.replace(/\*/g, ""));

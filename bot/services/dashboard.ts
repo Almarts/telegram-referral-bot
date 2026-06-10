@@ -200,6 +200,26 @@ export async function getReferralStats(userId: string): Promise<ReferralStats> {
     .then((r) => r[0] ?? null);
   const tiers = (cfg?.l1Tiers as TierConfig[]) ?? [];
 
+  // Check if user is a VIP creator with fixed bps
+  const l1User = await db
+    .select({ role: users.role, vipBps: users.vipBps })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+    .then((r) => r[0] ?? null);
+
+  if (l1User?.role === "creator" && l1User?.vipBps != null) {
+    // VIP creator: show fixed rate, no tier progression
+    const tier: TierConfig = { min: 0, bps: l1User.vipBps };
+    return buildReferralStats({
+      l1Users,
+      l1PaidCounts,
+      l2Users,
+      l2PaidCounts,
+      tiers: [tier],
+    });
+  }
+
   return buildReferralStats({ l1Users, l1PaidCounts, l2Users, l2PaidCounts, tiers });
 }
 

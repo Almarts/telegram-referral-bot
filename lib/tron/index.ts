@@ -2,6 +2,7 @@ import type { TronService } from "./types";
 import { createFakeTron } from "./fake";
 import { createRealTron } from "./real";
 import { getEnv } from "@/lib/env";
+import { wrapWithSafetyRails } from "./safety-rail";
 
 let _tron: TronService | null = null;
 let _testOverride: TronService | null = null;
@@ -12,7 +13,8 @@ let _testOverride: TronService | null = null;
  * - When `process.env.TRON_FAKE === "1"`, creates an in-memory fake (no TRON
  *   network access). Useful for local dev / CI without real TRON keys.
  * - Otherwise creates a real TronService backed by @scure/bip32 HD derivation
- *   and the TronGrid REST API.
+ *   and the TronGrid REST API wrapped with safety rails to prevent accidental
+ *   USDT sends to wrong addresses.
  * - During tests, use __setTronForTesting / __resetTronForTesting to inject a
  *   fake or mock.
  */
@@ -22,11 +24,14 @@ export function getTron(): TronService {
     if (process.env.TRON_FAKE === "1") {
       _tron = createFakeTron();
     } else {
-      _tron = createRealTron({
-        xprv: getEnv().TRON_DEPOSIT_XPRV,
-        hotPk: getEnv().TRON_HOT_WALLET_PK,
-        apiKey: getEnv().TRONGRID_API_KEY,
-      });
+      _tron = wrapWithSafetyRails(
+        createRealTron({
+          xprv: getEnv().TRON_DEPOSIT_XPRV,
+          hotPk: getEnv().TRON_HOT_WALLET_PK,
+          apiKey: getEnv().TRONGRID_API_KEY,
+        }),
+        getEnv().TRON_COLD_WALLET_ADDRESS,
+      );
     }
   }
   return _tron;

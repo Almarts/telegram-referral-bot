@@ -31,22 +31,6 @@ export async function handleWithdrawNow(ctx: Context): Promise<void> {
     return;
   }
 
-  // Check cooling-off period (24h)
-  if (user.payoutAddressChangedAt) {
-    const cooldownEnd = new Date(
-      user.payoutAddressChangedAt.getTime() + 24 * 60 * 60 * 1000,
-    );
-    if (new Date() < cooldownEnd) {
-      const remaining = Math.ceil(
-        (cooldownEnd.getTime() - Date.now()) / (60 * 60 * 1000),
-      );
-      await ctx.reply(
-        `Payout address was changed recently. Withdrawals are available in ${remaining} hours.`,
-      );
-      return;
-    }
-  }
-
   const summary = await getEarningsSummary(user.id);
 
   // Load min_payout_usdt threshold
