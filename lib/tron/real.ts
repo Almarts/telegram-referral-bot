@@ -487,28 +487,49 @@ export function createRealTron(opts: RealTronOpts): TronService {
     },
 
     async usdtBalance(address: string): Promise<string> {
-      // Use wallet/getaccount (POST with hex) — more reliable than v1/accounts
-      const acct = await tronPost<{ balance?: number; trc20?: Array<Record<string, string>> }>(
-        "/wallet/getaccount",
-        { address: base58toHex(address) },
-      );
-      const trc20 = (acct.trc20 ?? []) as Array<Record<string, string>>;
-      const usdtEntry = trc20.find(
-        (t) => Object.keys(t)[0] === USDT_CONTRACT,
-      );
-      if (!usdtEntry) {
-        // Account may be unactivated (no TRX). Fall back to checking TRC20
-        // transfers to detect USDT held by an unactivated address.
+      const tw = await _getTronWeb();
+      try {
+        const req = await tw.transactionBuilder.triggerConstantContract(
+          USDT_CONTRACT,
+          "balanceOf(address)",
+          {},
+          [{ type: "address", value: address }],
+          address,
+        );
+        if (req.result?.result && req.constant_result?.[0]) {
+          const hex = req.constant_result[0];
+          const balanceBigInt = BigInt("0x" + hex);
+          return atomicToUsdt(balanceBigInt.toString());
+        }
+      } catch {
+        // fall through to fallback
+      }
+      // Fallback 1: wallet/getaccount
+      try {
+        const acct = await tronPost<{ balance?: number; trc20?: Array<Record<string, string>> }>(
+          "/wallet/getaccount",
+          { address: base58toHex(address) },
+        );
+        const trc20 = (acct.trc20 ?? []) as Array<Record<string, string>>;
+        const usdtEntry = trc20.find(
+          (t) => Object.keys(t)[0] === USDT_CONTRACT,
+        );
+        if (usdtEntry) {
+          return atomicToUsdt(usdtEntry[USDT_CONTRACT]);
+        }
+      } catch {
+        // fall through
+      }
+      // Fallback 2: last incoming transfer
+      try {
         const transfers = await this.listUsdtTransfersTo(address, { limit: 1 });
         if (transfers.length > 0) {
-          // Return the latest incoming transfer amount as the balance.
-          // This is a best-effort approximation — the real balance can
-          // only be obtained via triggerConstantContract.
           return transfers[0].amountUsdt;
         }
-        return "0.000000";
+      } catch {
+        // fall through
       }
-      return atomicToUsdt(usdtEntry[USDT_CONTRACT]);
+      return "0.000000";
     },
 
     async trxBalanceSun(address: string): Promise<bigint> {
