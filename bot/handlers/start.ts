@@ -17,7 +17,7 @@ function creatorKeyboard(): ReplyKeyboardMarkup {
     keyboard: [
       [{ text: "Buy access" }],
       [{ text: "My referrals" }, { text: "Earnings" }],
-      [{ text: "Set payout address" }],
+      [{ text: "Withdraw" }, { text: "Set payout address" }],
     ],
     resize_keyboard: true,
   };
@@ -28,7 +28,7 @@ function vipKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
       [{ text: "My referrals" }, { text: "Earnings" }],
-      [{ text: "Set payout address" }],
+      [{ text: "Withdraw" }, { text: "Set payout address" }],
     ],
     resize_keyboard: true,
   };

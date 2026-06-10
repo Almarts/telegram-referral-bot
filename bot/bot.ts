@@ -44,6 +44,7 @@ export function createBot(token: string): Bot<Context> {
   bot.hears("Earnings", creatorOnly, handleEarnings);
   bot.hears("Set payout address", creatorOnly, handleSetPayoutAddress);
   bot.hears("Buy access", handleBuy);
+  bot.hears("Withdraw", creatorOnly, handleWithdrawNow);
 
   // Withdraw command — only for creators
   bot.command("withdraw", creatorOnly, handleWithdrawNow);
