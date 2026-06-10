@@ -6,6 +6,12 @@ import { hexToBytes, bytesToHex, concatBytes } from "@noble/hashes/utils";
 import { base58check } from "@scure/base";
 import type { TronService, UsdtTransfer, Signer } from "./types";
 
+/** Convert a TRON base58 address (e.g. TMnt...) to hex (4187a5...). */
+function base58toHex(addr: string): string {
+  const decoded = base58check(sha256).decode(addr);
+  return bytesToHex(decoded);
+}
+
 // BIP44 path prefix for TRON (coin type 195 = 0x800000C3)
 const TRON_PATH_PREFIX = "m/44'/195'/0'/0/";
 
@@ -253,6 +259,29 @@ export function createRealTron(opts: RealTronOpts): TronService {
     }
   }
 
+  /** TronGrid POST with JSON body and JSON response. */
+  async function tronPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    const url = `${TRONGRID_BASE}${path}`;
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "TRON-PRO-API-KEY": opts.apiKey,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+      10_000,
+    );
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => "");
+      throw new Error(`TronGrid POST ${res.status} on ${path}: ${bodyText}`);
+    }
+    return (await res.json()) as T;
+  }
+
   /** Broadcast a signed transaction with 30s timeout. */
   async function broadcastAndWait(
     tx: unknown,
@@ -340,10 +369,11 @@ export function createRealTron(opts: RealTronOpts): TronService {
     // TRC20 transfers need ~13 TRX for energy when no frozen energy available.
     // We check: balance >= FEE_LIMIT (18 TRX) to be safe.
     // =====================================================================
-    const senderBalance = await tronGet<{ balance?: number }>(
-      `/v1/accounts/${fromAddress}`,
+    const senderBalance = await tronPost<{ balance?: number }>(
+      "/wallet/getaccount",
+      { address: base58toHex(fromAddress) },
     ).then(
-      (r) => (r as unknown as { data?: Array<{ balance: number }> }).data?.[0]?.balance ?? 0,
+      (r) => (r.balance as number | undefined) ?? 0,
     );
     const MIN_TRX_FOR_USDT = FEE_LIMIT; // need at least 18 TRX to cover fee_limit + energy
     if (senderBalance < MIN_TRX_FOR_USDT) {
@@ -457,10 +487,12 @@ export function createRealTron(opts: RealTronOpts): TronService {
     },
 
     async usdtBalance(address: string): Promise<string> {
-      const acct = await tronGet<{ data: Array<Record<string, unknown>> }>(
-        `/v1/accounts/${address}`,
+      // Use wallet/getaccount (POST with hex) — more reliable than v1/accounts
+      const acct = await tronPost<{ balance?: number; trc20?: Array<Record<string, string>> }>(
+        "/wallet/getaccount",
+        { address: base58toHex(address) },
       );
-      const trc20 = (acct.data?.[0]?.trc20 as Array<Record<string, string>> | undefined) ?? [];
+      const trc20 = (acct.trc20 ?? []) as Array<Record<string, string>>;
       const usdtEntry = trc20.find(
         (t) => Object.keys(t)[0] === USDT_CONTRACT,
       );
@@ -480,10 +512,11 @@ export function createRealTron(opts: RealTronOpts): TronService {
     },
 
     async trxBalanceSun(address: string): Promise<bigint> {
-      const acct = await tronGet<{ data: Array<Record<string, unknown>> }>(
-        `/v1/accounts/${address}`,
+      const acct = await tronPost<{ balance?: number }>(
+        "/wallet/getaccount",
+        { address: base58toHex(address) },
       );
-      const balance = (acct.data?.[0]?.balance as number | undefined) ?? 0;
+      const balance = (acct.balance as number | undefined) ?? 0;
       return BigInt(balance);
     },
 
