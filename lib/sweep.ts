@@ -36,7 +36,15 @@ export function sweepInvoice(ctx: SweepContext): SweepDecision {
   }
 
   if (ctx.trxBalanceSun < DEFAULT_TRX_FOR_TRANSFER_SUN) {
-    return { swept: false, txHash: null, needsTrxTopUp: true };
+    // ❌ Top-up disabled: sending TRX from hot wallet to deposit addresses
+    //    was draining the hot wallet. User lost ~78 TRX this way.
+    //    Only sweep deposits that already have enough TRX for fees.
+    console.warn(
+      `sweep: ${ctx.address} has ${(Number(ctx.trxBalanceSun) / 1e6).toFixed(2)} TRX (` +
+      `need ${(Number(DEFAULT_TRX_FOR_TRANSFER_SUN) / 1e6).toFixed(0)} TRX). ` +
+      `Skipping — insufficient TRX on deposit.`
+    );
+    return { swept: false, txHash: null, needsTrxTopUp: false };
   }
 
   return { swept: false, txHash: null, needsTrxTopUp: false };
@@ -113,14 +121,7 @@ export async function processSweeps(): Promise<number> {
       }
 
       if (decision.needsTrxTopUp) {
-        const hotSigner = tron.hotSigner();
-        const topUp = await tron.sendTrx({
-          fromAddress: hotSigner.address,
-          toAddress: address,
-          amountSun: DEFAULT_TRX_FOR_TRANSFER_SUN,
-          signer: hotSigner,
-        });
-        console.log(`sweep: topped up ${topUp.txHash} for ${address}`);
+        // ❌ Top-up is handled inside sweepInvoice now (always returns false)
         continue;
       }
 
