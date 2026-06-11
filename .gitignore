@@ -50,3 +50,4 @@ scripts/bot_token.txt
 scripts/run_sweep.py
 scripts/check_invoices.py
 deploy.mjs
+sweep-env.json
