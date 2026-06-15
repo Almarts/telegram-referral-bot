@@ -1,4 +1,5 @@
-import type { TronService, UsdtTransfer } from "./types";
+import type { TronService } from "./types";
+import type { UsdtTransfer } from "./types";
 
 // USDT TRC20 contract address on TRON mainnet
 const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
@@ -97,10 +98,6 @@ export function createRealTron(opts: RealTronOpts): TronService {
   }
 
   return {
-    deriveDepositAddress() { throw new Error("No deposit addresses — payments go to cold wallet"); },
-    signerForIndex() { throw new Error("No signing — read-only TronService"); },
-    hotSigner() { throw new Error("No signing — read-only TronService"); },
-
     async verifyUsdtTransfer(txHash: string, expectedTo: string): Promise<{
       confirmed: boolean;
       from: string;
@@ -185,8 +182,5 @@ export function createRealTron(opts: RealTronOpts): TronService {
       );
       return BigInt((acct.balance as number | undefined) ?? 0);
     },
-
-    async sendUsdt() { throw new Error("sendUsdt removed — all payments go directly to cold wallet"); },
-    async sendTrx() { throw new Error("sendTrx removed"); },
   };
 }

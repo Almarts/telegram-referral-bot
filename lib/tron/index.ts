@@ -29,4 +29,4 @@ export function __resetTronForTesting(): void {
   _tron = null;
 }
 
-export type { TronService, UsdtTransfer, Signer } from "./types";
+export type { TronService, UsdtTransfer } from "./types";

@@ -1,9 +1,3 @@
-export interface Signer {
-  readonly address: string;
-  sign(rawTx: unknown): Promise<{ txId: string }>;
-  privateKeyHex(): Promise<string>;
-}
-
 export interface UsdtTransfer {
   txHash: string;
   from: string;
@@ -14,15 +8,6 @@ export interface UsdtTransfer {
 }
 
 export interface TronService {
-  /** Derive a TRC20 deposit address from the BIP32 path m/44'/195'/0'/0/{index}. */
-  deriveDepositAddress(index: number): { address: string };
-
-  /** Return a signer for the deposit address at the given BIP32 index. */
-  signerForIndex(index: number): Signer;
-
-  /** Return a signer for the hot wallet (commission payouts). */
-  hotSigner(): Signer;
-
   /** Verify a USDT transfer by txHash — check it went to expectedTo. */
   verifyUsdtTransfer(txHash: string, expectedTo: string): Promise<{
     confirmed: boolean;
@@ -39,20 +24,4 @@ export interface TronService {
 
   /** TRX balance of an address in SUN. */
   trxBalanceSun(address: string): Promise<bigint>;
-
-  /** Broadcast a USDT TRC20 transfer. Returns the tx hash. */
-  sendUsdt(opts: {
-    fromAddress: string;
-    toAddress: string;
-    amount: string;
-    signer: Signer;
-  }): Promise<{ txHash: string }>;
-
-  /** Broadcast a TRX transfer, amount in SUN. Returns the tx hash. */
-  sendTrx(opts: {
-    fromAddress: string;
-    toAddress: string;
-    amountSun: bigint;
-    signer: Signer;
-  }): Promise<{ txHash: string }>;
 }
