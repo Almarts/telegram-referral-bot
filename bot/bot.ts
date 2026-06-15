@@ -5,6 +5,7 @@ import { handleRenew } from "./handlers/renew";
 import { handleMyReferrals } from "./handlers/my_referrals";
 import { handleEarnings } from "./handlers/earnings";
 import { handleDashboard } from "./handlers/admin_dashboard";
+import { handleCommissions, handleCommissionsCallback } from "./handlers/commissions";
 import { onboardUser } from "./services/onboarding";
 import { getEnv } from "@/lib/env";
 
@@ -83,6 +84,14 @@ export function createBot(token: string): Bot<Context> {
     await handleDashboard(ctx);
   });
 
+  bot.command("commissions", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    await handleCommissions(ctx);
+  });
+
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data ?? "";
     if (data.startsWith("buy:")) {
@@ -90,6 +99,8 @@ export function createBot(token: string): Bot<Context> {
     } else if (data.startsWith("admin:")) {
       const { handleDashboardCallback } = await import("./handlers/admin_dashboard");
       await handleDashboardCallback(ctx);
+    } else if (data.startsWith("comm:")) {
+      await handleCommissionsCallback(ctx);
     }
   });
 

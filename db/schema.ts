@@ -35,6 +35,7 @@ export const subscriptionStatusEnum = pgEnum("subscription_status", [
 
 export const commissionStatusEnum = pgEnum("commission_status", [
   "accrued",
+  "paid",
   "clawed_back",
 ]);
 
