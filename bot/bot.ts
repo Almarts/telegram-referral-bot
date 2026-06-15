@@ -1,22 +1,10 @@
 import { Bot, Context } from "grammy";
 import { handleStart } from "./handlers/start";
-import { handleBuy, handleBuyCallback, handleCheckCallback } from "./handlers/buy";
+import { handleBuy, handleBuyCallback, handleTxid } from "./handlers/buy";
 import { handleRenew } from "./handlers/renew";
 import { handleMyReferrals } from "./handlers/my_referrals";
 import { handleEarnings } from "./handlers/earnings";
-import {
-  handleSetPayoutAddress,
-  handlePayoutAddressInput,
-} from "./handlers/payout_address";
-import { handleWithdrawNow } from "./handlers/withdraw_now";
-import { handleAdminStats } from "./handlers/admin_stats";
-import { handleAddCreator } from "./handlers/add_creator";
-import { handleDashboard, handleDashboardCallback } from "./handlers/admin_dashboard";
-import { handleSubs } from "./handlers/admin_subs";
-import { handleFinance } from "./handlers/admin_finance";
-import { handleTree } from "./handlers/admin_tree";
-import { adminOnly } from "./middleware/admin_only";
-import { creatorOnly } from "./middleware/creator_only";
+import { handleDashboard } from "./handlers/admin_dashboard";
 import { onboardUser } from "./services/onboarding";
 import { getEnv } from "@/lib/env";
 
@@ -39,67 +27,69 @@ export function createBot(token: string): Bot<Context> {
   bot.command("buy", handleBuy);
   bot.command("renew", handleRenew);
 
-  // Text-based menu handlers — only for creators
-  bot.hears("My referrals", creatorOnly, handleMyReferrals);
-  bot.hears("Earnings", creatorOnly, handleEarnings);
-  bot.hears("Set payout address", creatorOnly, handleSetPayoutAddress);
-  bot.hears("Buy access", handleBuy);
-  bot.hears("Withdraw", creatorOnly, handleWithdrawNow);
-
-  // Withdraw command — only for creators
-  bot.command("withdraw", creatorOnly, handleWithdrawNow);
-
-  // Admin (gated by ADMIN_TG_IDS)
-  bot.command("admin", adminOnly, handleAdminStats);
-  bot.command("add_creator", adminOnly, handleAddCreator);
-  bot.command("dashboard", adminOnly, handleDashboard);
-  bot.command("subs", adminOnly, handleSubs);
-  bot.command("finance", adminOnly, handleFinance);
-  bot.command("tree", adminOnly, handleTree);
-  bot.command("payouts", adminOnly, async (ctx) => {
-    const { getPendingPayouts } = await import("@/lib/payout-approval");
-    const list = getPendingPayouts();
-    if (list.length === 0) {
-      await ctx.reply("No pending payouts right now.", { parse_mode: "Markdown" });
-      return;
-    }
-    const lines = list.map(
-      (p, i) =>
-        `${i + 1}. \`${p.id}\` — ${p.amountUsdt} USDT → \`${p.toAddress.slice(0, 8)}…\` (${Math.floor((Date.now() - p.createdAt) / 1000)}s ago)`,
-    );
-    await ctx.reply(
-      `*Pending payouts:* ${list.length}\n\n${lines.join("\n")}`,
-      { parse_mode: "Markdown" },
-    );
-  });
-
-  // Payout address conversation: intercept text messages when in awaiting state
-  bot.on("message:text", async (ctx) => {
+  // Text-based menu handlers — creators see referrals/earnings
+  bot.hears("My referrals", async (ctx) => {
     const tgUser = ctx.from;
     if (!tgUser) return;
+    const { getDb } = await import("@/db/client");
+    const { users } = await import("@/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const db = getDb();
+    const user = await db
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.tgUserId, BigInt(tgUser.id)))
+      .limit(1)
+      .then((r) => r[0] ?? null);
+    if (user?.role !== "creator") return;
+    await handleMyReferrals(ctx);
+  });
 
+  bot.hears("Earnings", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const { getDb } = await import("@/db/client");
+    const { users } = await import("@/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const db = getDb();
+    const user = await db
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.tgUserId, BigInt(tgUser.id)))
+      .limit(1)
+      .then((r) => r[0] ?? null);
+    if (user?.role !== "creator") return;
+    await handleEarnings(ctx);
+  });
+
+  bot.hears("Buy access", handleBuy);
+
+  // Handle TXID — user pastes transaction hash after payment
+  bot.on("message:text", async (ctx) => {
     const text = ctx.message?.text ?? "";
-    const handled = await handlePayoutAddressInput(ctx, BigInt(tgUser.id), text);
-    if (handled) return;
+    // If it looks like a TRON TXID (64 hex chars), try to settle
+    if (/^[0-9a-fA-F]{64}$/.test(text.trim())) {
+      await handleTxid(ctx);
+    }
+    // Otherwise silently ignore unrecognized text messages
+  });
 
-    // If not handled by conversation state, it's an unrecognized message
-    // Silently ignore — the menu keyboard handles navigation
+  // Admin dashboard
+  bot.command("admin", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    await handleDashboard(ctx);
   });
 
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data ?? "";
     if (data.startsWith("buy:")) {
       await handleBuyCallback(ctx);
-    } else if (data.startsWith("check:")) {
-      await handleCheckCallback(ctx);
-    } else if (data === "withdraw_now") {
-      await handleWithdrawNow(ctx);
     } else if (data.startsWith("admin:")) {
+      const { handleDashboardCallback } = await import("./handlers/admin_dashboard");
       await handleDashboardCallback(ctx);
-    } else if (data.startsWith("approve:") || data.startsWith("reject:")) {
-      const { handlePayoutCallback } = await import("@/lib/payout-approval");
-      const tron = (await import("@/lib/tron")).getTron();
-      await handlePayoutCallback(ctx, bot, tron);
     }
   });
 

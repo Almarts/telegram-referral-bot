@@ -5,18 +5,11 @@ import {
   invoices,
   subscriptions,
   commissionLedger,
-  commissionConfig,
-  subscriptionPlans,
 } from "@/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
-import { getTron } from "@/lib/tron";
-import { getEnv } from "@/lib/env";
 
 export async function handleDashboard(ctx: Context): Promise<void> {
   const db = getDb();
-  const tron = getTron();
-  const hotSigner = tron.hotSigner();
-  const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
 
   const [
     totalUsers,
@@ -24,10 +17,7 @@ export async function handleDashboard(ctx: Context): Promise<void> {
     expiredSubs,
     paidToday,
     totalRevenue,
-    pendingPayouts,
-    hotUsdt,
-    hotTrx,
-    config,
+    totalCommissionAccrued,
     latestUsers,
   ] = await Promise.all([
     db
@@ -66,19 +56,10 @@ export async function handleDashboard(ctx: Context): Promise<void> {
     db
       .select({
         total: sql<string>`coalesce(sum(${commissionLedger.amountUsdt}), '0')`,
-        count: sql<number>`count(*)::int`,
       })
       .from(commissionLedger)
-      .where(eq(commissionLedger.status, "payable"))
-      .then((r) => r[0] ?? { total: "0", count: 0 }),
-
-    tron.usdtBalance(hotSigner.address),
-    tron.trxBalanceSun(hotSigner.address),
-    db
-      .select({ minPayout: commissionConfig.minPayoutUsdt })
-      .from(commissionConfig)
-      .limit(1)
-      .then((r) => r[0] ?? null),
+      .where(eq(commissionLedger.status, "accrued"))
+      .then((r) => r[0]?.total ?? "0"),
 
     db
       .select({
@@ -96,29 +77,19 @@ export async function handleDashboard(ctx: Context): Promise<void> {
     "",
     `👥 Users: *${totalUsers}* | ✅ Active: *${activeSubs}* | ❌ Expired: *${expiredSubs}*`,
     `📦 Paid today: *${paidToday}* | Total rev: *${totalRevenue} USDT*`,
-    `💸 Pending payouts: *${pendingPayouts.total} USDT* (${pendingPayouts.count})`,
-    "",
-    "*Hot wallet:*",
-    `  USDT ${hotUsdt} | TRX ${hotTrx}`,
+    `💰 Accrued commissions: *${totalCommissionAccrued} USDT*`,
     "",
     "*Latest users:*",
     ...latestUsers.map(
       (u) =>
         `  • ${u.tgUsername ? `@${u.tgUsername}` : `id:${u.tgUserId}`} — ${new Date(u.createdAt).toISOString().slice(0, 10)}`,
     ),
-    "",
-    "Use /subs /finance /tree for details.",
   ];
 
   await ctx.reply(lines.join("\n"), {
     parse_mode: "Markdown",
     reply_markup: {
       inline_keyboard: [
-        [
-          { text: "📊 Subs", callback_data: "admin:subs" },
-          { text: "💰 Finance", callback_data: "admin:finance" },
-          { text: "🌳 Tree", callback_data: "admin:tree" },
-        ],
         [
           { text: "🔄 Refresh", callback_data: "admin:dashboard" },
         ],
@@ -133,27 +104,9 @@ export async function handleDashboardCallback(ctx: Context): Promise<void> {
   if (!data?.startsWith("admin:")) return;
 
   const action = data.split(":")[1];
-
   await ctx.answerCallbackQuery();
 
-  switch (action) {
-    case "dashboard":
-      await handleDashboard(ctx);
-      break;
-    case "subs":
-      // Import and call the subs handler — but we need to pass the ctx
-      // to the existing handler. Since handleSubs uses ctx.reply, we can
-      // just require and call.
-      const { handleSubs } = await import("./admin_subs");
-      await handleSubs(ctx);
-      break;
-    case "finance":
-      const { handleFinance } = await import("./admin_finance");
-      await handleFinance(ctx);
-      break;
-    case "tree":
-      const { handleTree } = await import("./admin_tree");
-      await handleTree(ctx);
-    // no default
+  if (action === "dashboard") {
+    await handleDashboard(ctx);
   }
 }

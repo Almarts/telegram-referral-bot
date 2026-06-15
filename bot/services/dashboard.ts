@@ -4,11 +4,8 @@ import {
   invoices,
   commissionLedger,
   commissionConfig,
-  payoutBatches,
 } from "@/db/schema";
-import { eq, and, sql, desc, inArray } from "drizzle-orm";
-import { pickTier } from "@/lib/commissions";
-import { add } from "@/lib/money";
+import { eq, and, sql } from "drizzle-orm";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -27,16 +24,8 @@ export interface ReferralStats {
 }
 
 export interface EarningsSummary {
-  paidUsdt: string;
-  payableUsdt: string;
   accruedUsdt: string;
-  lifetimeUsdt: string;
-  byLevel30d: { l1: string; l2: string };
-  recentPayouts: {
-    amountUsdt: string;
-    txHash: string | null;
-    broadcastAt: Date | null;
-  }[];
+  totalUsdt: string;
 }
 
 // ── Pure builders ──────────────────────────────────────────────────────────
@@ -61,8 +50,11 @@ export function buildReferralStats(params: {
     l2LifetimePaid += params.l2PaidCounts.get(u.id) ?? 0;
   }
 
-  const currentTier = pickTier(params.tiers, l1LifetimePaid);
-  const l1TierBps = currentTier.bps;
+  let currentTier = params.tiers[0];
+  for (const tier of params.tiers) {
+    if (l1LifetimePaid >= tier.min) currentTier = tier;
+  }
+  const l1TierBps = currentTier?.bps ?? 0;
 
   let nextTier: TierConfig | null = null;
   for (const t of params.tiers) {
@@ -77,53 +69,22 @@ export function buildReferralStats(params: {
 }
 
 export function buildEarningsSummary(params: {
-  ledgerRows: {
-    level: number;
-    status: string;
-    amountUsdt: string;
-    createdAt: Date;
-  }[];
-  recentPayouts: {
-    amountUsdt: string;
-    txHash: string | null;
-    broadcastAt: Date | null;
-  }[];
+  ledgerRows: { amountUsdt: string }[];
 }): EarningsSummary {
-  let paid = "0.000000";
-  let payable = "0.000000";
-  let accrued = "0.000000";
-  let lifetime = "0.000000";
-  let l1_30d = "0.000000";
-  let l2_30d = "0.000000";
-
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
+  let total = "0.000000";
   for (const row of params.ledgerRows) {
-    const a = row.amountUsdt;
-
-    if (row.status === "paid") {
-      paid = add(paid, a);
-      lifetime = add(lifetime, a);
-    } else if (row.status === "payable") {
-      payable = add(payable, a);
-      lifetime = add(lifetime, a);
-    } else {
-      accrued = add(accrued, a);
-    }
-
-    if (row.createdAt >= thirtyDaysAgo) {
-      if (row.level === 1) l1_30d = add(l1_30d, a);
-      if (row.level === 2) l2_30d = add(l2_30d, a);
-    }
+    const [i, f = ""] = total.split(".");
+    const ri = row.amountUsdt.split(".")[0] ?? "0";
+    const rf = row.amountUsdt.split(".")[1] ?? "000000";
+    const sum = BigInt(i + f.padEnd(6, "0").slice(0, 6)) +
+                BigInt(ri + rf.padEnd(6, "0").slice(0, 6));
+    const intPart = sum / 1_000_000n;
+    const fracPart = sum % 1_000_000n;
+    total = `${intPart}.${String(fracPart).padStart(6, "0")}`;
   }
-
   return {
-    paidUsdt: paid,
-    payableUsdt: payable,
-    accruedUsdt: accrued,
-    lifetimeUsdt: lifetime,
-    byLevel30d: { l1: l1_30d, l2: l2_30d },
-    recentPayouts: params.recentPayouts,
+    accruedUsdt: total,
+    totalUsdt: total,
   };
 }
 
@@ -131,7 +92,6 @@ export function buildEarningsSummary(params: {
 
 async function paidCountsForUsers(userIds: string[]): Promise<Map<string, number>> {
   if (userIds.length === 0) return new Map();
-
   const db = getDb();
   const rows = await db
     .select({
@@ -139,9 +99,8 @@ async function paidCountsForUsers(userIds: string[]): Promise<Map<string, number
       count: sql<number>`count(*)::int`,
     })
     .from(invoices)
-    .where(and(eq(invoices.status, "paid"), inArray(invoices.userId, userIds)))
+    .where(and(eq(invoices.status, "paid"), sql`${invoices.userId} = ANY(ARRAY[${sql.join(userIds.map((c) => sql`${c}`), sql`, `)}])`))
     .groupBy(invoices.userId);
-
   const map = new Map<string, number>();
   for (const row of rows) {
     map.set(row.userId, row.count);
@@ -153,9 +112,7 @@ async function usersByParentCodes(
   parentCodes: string[],
 ): Promise<{ id: string; refCode: string | null }[]> {
   if (parentCodes.length === 0) return [];
-
   const db = getDb();
-  // SQL: WHERE parent_ref_code = ANY($1)
   const rows = await db
     .select({ id: users.id, refCode: users.refCode })
     .from(users)
@@ -181,18 +138,15 @@ export async function getReferralStats(userId: string): Promise<ReferralStats> {
     return { l1Count: 0, l1LifetimePaid: 0, l1TierBps: 0, nextTier: null, l2Count: 0, l2LifetimePaid: 0 };
   }
 
-  // L1: users whose parent_ref_code = my ref_code
   const l1Users = await usersByParentCodes([user.refCode]);
   const l1Ids = l1Users.map((u) => u.id);
   const l1PaidCounts = await paidCountsForUsers(l1Ids);
 
-  // L2: users whose parent_ref_code is in L1 ref_codes
   const l1RefCodes = l1Users.map((u) => u.refCode).filter((c): c is string => c !== null);
   const l2Users = await usersByParentCodes(l1RefCodes);
   const l2Ids = l2Users.map((u) => u.id);
   const l2PaidCounts = await paidCountsForUsers(l2Ids);
 
-  // Tier config
   const cfg = await db
     .select({ l1Tiers: commissionConfig.l1Tiers })
     .from(commissionConfig)
@@ -200,7 +154,6 @@ export async function getReferralStats(userId: string): Promise<ReferralStats> {
     .then((r) => r[0] ?? null);
   const tiers = (cfg?.l1Tiers as TierConfig[]) ?? [];
 
-  // Check if user is a VIP creator with fixed bps
   const l1User = await db
     .select({ role: users.role, vipBps: users.vipBps })
     .from(users)
@@ -209,14 +162,9 @@ export async function getReferralStats(userId: string): Promise<ReferralStats> {
     .then((r) => r[0] ?? null);
 
   if (l1User?.role === "creator" && l1User?.vipBps != null) {
-    // VIP creator: show fixed rate, no tier progression
     const tier: TierConfig = { min: 0, bps: l1User.vipBps };
     return buildReferralStats({
-      l1Users,
-      l1PaidCounts,
-      l2Users,
-      l2PaidCounts,
-      tiers: [tier],
+      l1Users, l1PaidCounts, l2Users, l2PaidCounts, tiers: [tier],
     });
   }
 
@@ -227,33 +175,9 @@ export async function getEarningsSummary(userId: string): Promise<EarningsSummar
   const db = getDb();
 
   const ledgerRows = await db
-    .select({
-      level: commissionLedger.level,
-      status: commissionLedger.status,
-      amountUsdt: commissionLedger.amountUsdt,
-      createdAt: commissionLedger.unlockAt,
-    })
+    .select({ amountUsdt: commissionLedger.amountUsdt })
     .from(commissionLedger)
     .where(eq(commissionLedger.beneficiaryId, userId));
 
-  const payouts = await db
-    .select({
-      amountUsdt: payoutBatches.amountUsdt,
-      txHash: payoutBatches.txHash,
-      broadcastAt: payoutBatches.broadcastAt,
-    })
-    .from(payoutBatches)
-    .where(eq(payoutBatches.beneficiaryId, userId))
-    .orderBy(desc(payoutBatches.broadcastAt))
-    .limit(5);
-
-  return buildEarningsSummary({
-    ledgerRows: ledgerRows.map((r) => ({
-      level: r.level,
-      status: r.status,
-      amountUsdt: r.amountUsdt,
-      createdAt: r.createdAt,
-    })),
-    recentPayouts: payouts,
-  });
+  return buildEarningsSummary({ ledgerRows });
 }

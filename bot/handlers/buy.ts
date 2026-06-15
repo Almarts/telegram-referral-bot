@@ -3,12 +3,13 @@ import { getActivePlans, createInvoice } from "@/bot/services/invoices";
 import { getDb } from "@/db/client";
 import { users, opsKillSwitch, invoices, subscriptionPlans } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { settleIfPaid } from "@/lib/settle";
+import { settleByTxId } from "@/lib/settle";
 import { grantChannelAccess } from "@/bot/services/grant";
 import { cooldown } from "@/lib/kv";
 import { getEnv } from "@/lib/env";
 import { formatGrantMessage } from "@/bot/services/grant";
 import { getBot } from "@/bot/bot";
+import { accrueCommissions } from "@/lib/commissions";
 
 const INVOICE_COOLDOWN_S = 30;
 
@@ -23,7 +24,7 @@ async function isBuyDisabled(): Promise<boolean> {
 }
 
 /**
- * /buy — show a picker of active subscription plans as inline keyboard buttons.
+ * /buy — show a picker of active subscription plans.
  */
 export async function handleBuy(ctx: Context): Promise<void> {
   if (await isBuyDisabled()) {
@@ -58,9 +59,8 @@ export async function handleBuy(ctx: Context): Promise<void> {
 }
 
 /**
- * Handle callback_query where data starts with "buy:".
- * Looks up the user and chosen plan, creates an invoice, and replies with
- * the deposit address and payment instructions.
+ * Handle callback_query "buy:<planId>".
+ * Creates an invoice and shows the cold wallet address for payment.
  */
 export async function handleBuyCallback(ctx: Context): Promise<void> {
   const data = ctx.callbackQuery?.data;
@@ -85,7 +85,6 @@ export async function handleBuyCallback(ctx: Context): Promise<void> {
 
   const db = getDb();
 
-  // Lookup the user's DB record by Telegram user id
   const user = await db
     .select({ id: users.id })
     .from(users)
@@ -107,39 +106,31 @@ export async function handleBuyCallback(ctx: Context): Promise<void> {
   try {
     const invoice = await createInvoice({ userId: user.id, planId });
 
-    // Build message without Markdown to avoid parse errors with dynamic addresses
+    const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
     const msgLines = [
       `*Plan:* ${invoice.planName}`,
       `*Amount:* ${invoice.amountUsdt} USDT`,
       "",
-      `Send exactly ${invoice.amountUsdt} USDT to:`,
-      invoice.depositAddress,
+      `Send exactly ${invoice.amountUsdt} USDT (USDT TRC20) to:`,
+      `\`${coldAddress}\``,
       "",
       `Expires: ${invoice.expiresAt.toISOString().replace("T", " ").slice(0, 16)} UTC`,
       "",
-      "After sending, tap I've paid.",
+      "After sending, send me the TXID (transaction hash).",
+      "",
+      "Example: `/settle a1b2c3d4e5f6...`",
+      "Or just paste the TXID here.",
     ];
     const msgText = msgLines.join("\n");
 
     await ctx.reply(msgText, {
       parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "I've paid", callback_data: `check:${invoice.id}` }],
-        ],
-      },
     }).catch(async (err) => {
-      console.error("handleBuyCallback: Markdown reply failed, falling back to plain text:", err.message);
-      await ctx.reply(msgText.replace(/\*/g, ""), {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "I've paid", callback_data: `check:${invoice.id}` }],
-          ],
-        },
-      });
+      console.error("handleBuyCallback: Markdown reply failed:", err.message);
+      await ctx.reply(msgText.replace(/[*`]/g, ""));
     });
 
-    await ctx.answerCallbackQuery({ text: "Invoice created." });
+    await ctx.answerCallbackQuery({ text: "Invoice created. Send the TXID after payment." });
   } catch (err) {
     console.error("handleBuyCallback:", err);
     ctx.answerCallbackQuery({ text: "Failed to create invoice. Try again." }).catch(() => {});
@@ -147,117 +138,98 @@ export async function handleBuyCallback(ctx: Context): Promise<void> {
 }
 
 /**
- * Handle the "I've paid" button callback (check:<invoice_id>).
- * Triggers on-demand settlement so users get instant feedback after paying.
+ * Handle TXID submitted by user — verify and settle.
+ * Called when user pastes a TXID as text.
  */
-export async function handleCheckCallback(ctx: Context): Promise<void> {
-  const data = ctx.callbackQuery?.data;
-  if (!data?.startsWith("check:")) return;
+export async function handleTxid(ctx: Context): Promise<void> {
+  const tgUser = ctx.from;
+  if (!tgUser) return;
 
-  const invoiceId = data.split(":")[1];
-  if (!invoiceId) {
-    await ctx.answerCallbackQuery({ text: "Invalid invoice." });
+  const text = ctx.message?.text ?? "";
+  const txId = text.trim();
+
+  // Validate TXID format (TRON tx hashes are 64 hex chars)
+  if (!/^[0-9a-fA-F]{64}$/.test(txId)) {
+    // Not a TXID — silently ignore
     return;
   }
 
-  await ctx.answerCallbackQuery({ text: "Checking payment..." });
+  const db = getDb();
+  const user = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.tgUserId, BigInt(tgUser.id)))
+    .limit(1)
+    .then((r) => r[0] ?? null);
+
+  if (!user) return;
+
+  // Find the user's most recent open invoice
+  const inv = await db
+    .select({ id: invoices.id })
+    .from(invoices)
+    .where(and(eq(invoices.userId, user.id), eq(invoices.status, "open")))
+    .orderBy(invoices.createdAt, "desc")
+    .limit(1)
+    .then((r) => r[0] ?? null);
+
+  if (!inv) {
+    await ctx.reply("You don't have any pending invoices. Use /buy first.");
+    return;
+  }
+
+  await ctx.reply("Verifying payment...");
 
   try {
-    // Try to settle if still pending
-    const result = await settleIfPaid(invoiceId);
+    const result = await settleByTxId(inv.id, txId);
 
     if (result.settled) {
-      await ctx.reply("Payment confirmed! You should receive an invite link shortly.");
-      // Send the invite link via DM — lookup tgUserId from DB
-      const db = getDb();
-      const dbUser = await db
-        .select({ tgUserId: users.tgUserId })
-        .from(users)
-        .where(eq(users.id, result.userId!))
-        .limit(1)
-        .then((r) => r[0] ?? null);
-      if (dbUser) {
+      await ctx.reply("✅ Payment confirmed! You should receive an invite link shortly.");
+
+      // Send invite link
+      if (result.userId && result.planName) {
         const bot = getBot();
         const channelId = getEnv().DEFAULT_CHANNEL_ID;
         const invite = await bot.api.createChatInviteLink(Number(channelId), {
           member_limit: 1,
           expire_date: Math.floor(Date.now() / 1000) + 3600,
         });
-        await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
-          inviteLink: invite.invite_link,
-          planName: result.planName || "Subscription",
-        }), { parse_mode: "Markdown" }).catch(async (err) => {
-          console.error("handleCheckCallback: invite DM Markdown failed:", err.message);
-          await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
-            inviteLink: invite.invite_link,
-            planName: result.planName || "Subscription",
-          }).replace(/\*/g, ""));
+
+        // Grant access
+        await grantChannelAccess({
+          userId: result.userId,
+          planName: result.planName,
+        }).catch((err) => console.error("grant:", err));
+
+        // Accrue commissions
+        await accrueCommissions(result.invoiceId).catch((err) =>
+          console.error("commissions:", err),
+        );
+
+        await bot.api.sendMessage(
+          Number(tgUser.id),
+          formatGrantMessage({ inviteLink: invite.invite_link, planName: result.planName }),
+          { parse_mode: "Markdown" },
+        ).catch(async (err) => {
+          console.error("invite DM failed:", err.message);
+          await bot.api.sendMessage(
+            Number(tgUser.id),
+            formatGrantMessage({ inviteLink: invite.invite_link, planName: result.planName }).replace(/\*/g, ""),
+          );
         });
       }
-      return;
-    }
-
-    // If not newly settled, check if invoice is already paid from a previous run
-    const db = getDb();
-    const paidInvoice = await db
-      .select({
-        userId: invoices.userId,
-        status: invoices.status,
-        planId: invoices.planId,
-      })
-      .from(invoices)
-      .where(and(eq(invoices.id, invoiceId), eq(invoices.status, "paid")))
-      .limit(1)
-      .then((r) => r[0] ?? null);
-
-    if (paidInvoice) {
-      // Already paid — try to send invite link
-      const plan = await db
-        .select({ name: subscriptionPlans.name })
-        .from(subscriptionPlans)
-        .where(eq(subscriptionPlans.id, paidInvoice.planId))
-        .limit(1)
-        .then((r) => r[0] ?? null);
-
-      await ctx.reply("Payment confirmed! You should receive an invite link shortly.");
-      const dbUser = await db
-        .select({ tgUserId: users.tgUserId })
-        .from(users)
-        .where(eq(users.id, paidInvoice.userId))
-        .limit(1)
-        .then((r) => r[0] ?? null);
-      if (dbUser) {
-        const bot = getBot();
-        const channelId = getEnv().DEFAULT_CHANNEL_ID;
-        const invite = await bot.api.createChatInviteLink(Number(channelId), {
-          member_limit: 1,
-          expire_date: Math.floor(Date.now() / 1000) + 3600,
-        });
-        await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
-          inviteLink: invite.invite_link,
-          planName: plan?.name || "Subscription",
-        }), { parse_mode: "Markdown" }).catch(async (err) => {
-          console.error("handleCheckCallback: invite DM Markdown failed (paid path):", err.message);
-          await bot.api.sendMessage(Number(dbUser.tgUserId), formatGrantMessage({
-            inviteLink: invite.invite_link,
-            planName: plan?.name || "Subscription",
-          }).replace(/\*/g, ""));
-        });
-      }
-      return;
-    }
-
-    if (result.underpayment) {
+    } else if (result.underpayment) {
       await ctx.reply(
-        "We detected a payment but the amount was less than required. Please send the full amount to complete your purchase.",
+        "We detected the transaction but the amount is less than required. Please send the full amount.",
       );
     } else {
       await ctx.reply(
-        "Payment not yet detected. It may take a moment to confirm on the blockchain. Try again or wait for automatic detection.",
+        "Transaction not found or not yet confirmed on the blockchain. " +
+        "Make sure you sent USDT TRC20 to the correct address and try again in a few minutes.",
       );
     }
   } catch (err) {
-    console.error("handleCheckCallback:", err);
-    await ctx.reply("Something went wrong checking your payment. We'll detect it automatically soon.");
+    console.error("handleTxid:", err);
+    await ctx.reply("Something went wrong verifying your payment. Please try again.");
   }
 }

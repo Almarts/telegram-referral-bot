@@ -16,19 +16,7 @@ export interface SettleResult {
   underpayment?: boolean;
 }
 
-// ── Pure helpers ───────────────────────────────────────────────────────────
-
-/**
- * Compute the starts_at date for a renewed subscription.
- *
- * Stacking rule: if the user has an active subscription that hasn't expired
- * yet, the new sub starts when the old one ends (no lost time). Otherwise,
- * it starts now (grace window = 0 per locked decision §2.9).
- */
-export function computeRenewalStart(
-  now: Date,
-  activeSubEndsAt?: Date,
-): Date {
+export function computeRenewalStart(now: Date, activeSubEndsAt?: Date): Date {
   if (activeSubEndsAt && activeSubEndsAt > now) {
     return activeSubEndsAt;
   }
@@ -36,21 +24,15 @@ export function computeRenewalStart(
 }
 
 /**
- * Check whether an invoice has been paid and settle it if so.
- *
- * For each pending invoice:
- * 1. Poll TronGrid for transfers to the deposit address.
- * 2. If any confirmed transfer >= invoice amount and txHash not already used -> mark paid.
- * 3. Create a subscription row (active, timestamped from now).
- *
- * Idempotent: the UNIQUE constraint on invoices.paid_tx_hash prevents double-settlement.
- * Underpayments are flagged but not settled.
+ * Verify a USDT transaction by TXID and settle the invoice.
+ * User provides the TXID after sending USDT to the cold wallet.
  */
-export async function settleIfPaid(invoiceId: string): Promise<SettleResult> {
+export async function settleByTxId(invoiceId: string, txId: string): Promise<SettleResult> {
   const db = getDb();
   const tron = getTron();
+  const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
 
-  // 1. Fetch invoice (only pending ones)
+  // 1. Fetch pending invoice
   const invoice = await db
     .select()
     .from(invoices)
@@ -58,11 +40,40 @@ export async function settleIfPaid(invoiceId: string): Promise<SettleResult> {
     .limit(1)
     .then((rows) => rows[0] ?? null);
 
-  if (!invoice || !invoice.depositAddress) {
+  if (!invoice) {
     return { settled: false, invoiceId };
   }
 
-  // 2. Get plan for subscription duration
+  // 2. Verify the TXID on-chain
+  const txInfo = await tron.verifyUsdtTransfer(txId, coldAddress);
+  if (!txInfo) {
+    return { settled: false, invoiceId };
+  }
+
+  // 3. Check amount is sufficient
+  if (!gte(txInfo.amountUsdt, invoice.amountUsdt)) {
+    // Underpayment
+    if (!invoice.hasPartialPayment) {
+      await db
+        .update(invoices)
+        .set({ hasPartialPayment: true })
+        .where(eq(invoices.id, invoiceId));
+    }
+    return { settled: false, invoiceId, underpayment: true };
+  }
+
+  // 4. Check if txHash already used (idempotency)
+  const alreadyUsed = await db
+    .select({ id: invoices.id })
+    .from(invoices)
+    .where(eq(invoices.paidTxHash, txId))
+    .limit(1);
+
+  if (alreadyUsed.length > 0) {
+    return { settled: false, invoiceId };
+  }
+
+  // 5. Get plan for subscription duration
   const plan = await db
     .select()
     .from(subscriptionPlans)
@@ -74,49 +85,10 @@ export async function settleIfPaid(invoiceId: string): Promise<SettleResult> {
     return { settled: false, invoiceId };
   }
 
-  // 3. Poll transfers
-  const transfers = await tron.listUsdtTransfersTo(invoice.depositAddress, {
-    sinceMs: invoice.createdAt.getTime(),
-  });
-
-  // 4. Find first confirmed transfer that meets or exceeds the invoice amount
-  const matching = transfers.find(
-    (t) => t.confirmed && gte(t.amountUsdt, invoice.amountUsdt),
-  );
-
-  if (!matching) {
-    // Check for underpayment
-    const hasAny = transfers.some((t) => t.confirmed);
-    if (hasAny) {
-      // Flag underpayment (non-blocking)
-      if (!invoice.hasPartialPayment) {
-        await db
-          .update(invoices)
-          .set({ hasPartialPayment: true })
-          .where(eq(invoices.id, invoiceId));
-      }
-      return { settled: false, invoiceId, underpayment: true };
-    }
-    return { settled: false, invoiceId };
-  }
-
-  // 5. Check if txHash was already used to settle another invoice
-  const alreadyUsed = await db
-    .select({ id: invoices.id })
-    .from(invoices)
-    .where(eq(invoices.paidTxHash, matching.txHash))
-    .limit(1);
-
-  if (alreadyUsed.length > 0) {
-    // Another invoice already consumed this txHash (UNIQUE constraint would also block this)
-    return { settled: false, invoiceId };
-  }
-
-  // 6. Settle: update invoice + create subscription
+  // 6. Settle
   try {
     const now = new Date();
 
-    // Check for an existing active subscription for stacking
     const existingActive = await db
       .select({ endsAt: subscriptions.endsAt })
       .from(subscriptions)
@@ -132,12 +104,8 @@ export async function settleIfPaid(invoiceId: string): Promise<SettleResult> {
       .then((r) => r[0] ?? null);
 
     const startsAt = computeRenewalStart(now, existingActive?.endsAt ?? undefined);
-    const endsAt = new Date(
-      startsAt.getTime() + plan.durationDays * 24 * 60 * 60 * 1000,
-    );
+    const endsAt = new Date(startsAt.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
 
-    // Create subscription FIRST — if this fails, invoice stays pending and cron retries.
-    // This avoids the irrecoverable state where invoice is paid but no subscription exists.
     const [sub] = await db
       .insert(subscriptions)
       .values({
@@ -150,12 +118,11 @@ export async function settleIfPaid(invoiceId: string): Promise<SettleResult> {
       })
       .returning();
 
-    // Mark invoice paid only after subscription row exists
     await db
       .update(invoices)
       .set({
         status: "paid",
-        paidTxHash: matching.txHash,
+        paidTxHash: txId,
         paidAt: now,
       })
       .where(eq(invoices.id, invoiceId));
@@ -166,10 +133,9 @@ export async function settleIfPaid(invoiceId: string): Promise<SettleResult> {
       userId: invoice.userId,
       planName: plan.name,
       subscriptionId: sub?.id,
-      txHash: matching.txHash,
+      txHash: txId,
     };
   } catch (err: unknown) {
-    // UNIQUE constraint on paid_tx_hash catches double-settlement
     if (isUniqueViolation(err)) {
       return { settled: false, invoiceId };
     }

@@ -17,18 +17,6 @@ function creatorKeyboard(): ReplyKeyboardMarkup {
     keyboard: [
       [{ text: "Buy access" }],
       [{ text: "My referrals" }, { text: "Earnings" }],
-      [{ text: "Withdraw" }, { text: "Set payout address" }],
-    ],
-    resize_keyboard: true,
-  };
-}
-
-/** Creator with vipBps set — has full menu + VIP message (no "Buy access" shown if you're VIP). */
-function vipKeyboard(): ReplyKeyboardMarkup {
-  return {
-    keyboard: [
-      [{ text: "My referrals" }, { text: "Earnings" }],
-      [{ text: "Withdraw" }, { text: "Set payout address" }],
     ],
     resize_keyboard: true,
   };
@@ -40,32 +28,20 @@ export async function handleStart(ctx: Context): Promise<void> {
 
   const name = tgUser.first_name ?? "there";
 
-  // Determine user role & vip status
   const db = getDb();
   const user = await db
-    .select({ role: users.role, vipBps: users.vipBps })
+    .select({ role: users.role })
     .from(users)
     .where(eq(users.tgUserId, BigInt(tgUser.id)))
     .limit(1)
     .then((r) => r[0] ?? null);
 
   const isCreator = user?.role === "creator";
-  const isVip = isCreator && user?.vipBps != null;
 
   let lines: string[];
   let keyboard: ReplyKeyboardMarkup;
 
-  if (isVip) {
-    const pct = (user.vipBps / 100).toFixed(0);
-    lines = [
-      `Welcome, ${name}! 🎉`,
-      "",
-      `You're a VIP creator — you earn ${pct}% per referral.`,
-      "",
-      "Choose an option below:",
-    ];
-    keyboard = vipKeyboard();
-  } else if (isCreator) {
+  if (isCreator) {
     lines = [
       `Welcome, ${name}!`,
       "",
@@ -86,4 +62,4 @@ export async function handleStart(ctx: Context): Promise<void> {
   });
 }
 
-export { regularKeyboard, creatorKeyboard, vipKeyboard };
+export { regularKeyboard, creatorKeyboard };

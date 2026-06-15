@@ -35,19 +35,11 @@ export const subscriptionStatusEnum = pgEnum("subscription_status", [
 
 export const commissionStatusEnum = pgEnum("commission_status", [
   "accrued",
-  "payable",
-  "paid",
   "clawed_back",
 ]);
 
-export const payoutModeEnum = pgEnum("payout_mode", ["instant", "deferred"]);
-
-export const batchStatusEnum = pgEnum("batch_status", [
-  "pending",
-  "broadcast",
-  "confirmed",
-  "failed",
-]);
+// Removed: payoutModeEnum (no auto-payouts)
+// Removed: batchStatusEnum (no payout batches)
 
 // ── Tables ───────────────────────────────────────────────────────────────────
 
@@ -60,10 +52,6 @@ export const users = pgTable(
     tgLang: text("tg_lang"),
     refCode: text("ref_code"),
     parentRefCode: text("parent_ref_code"),
-    payoutAddress: text("payout_address"),
-    payoutAddressChangedAt: timestamp("payout_address_changed_at", {
-      withTimezone: true,
-    }),
     role: text("role").notNull().default("regular"),
     vipBps: integer("vip_bps"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -147,10 +135,7 @@ export const commissionLedger = pgTable(
     basisUsdt: numeric("basis_usdt", { precision: 18, scale: 6 }).notNull(),
     rateBps: integer("rate_bps").notNull(),
     amountUsdt: numeric("amount_usdt", { precision: 18, scale: 6 }).notNull(),
-    unlockAt: timestamp("unlock_at", { withTimezone: true }).notNull(),
     status: commissionStatusEnum("status").notNull().default("accrued"),
-    batchId: uuid("batch_id").references(() => payoutBatches.id),
-    paidTxHash: text("paid_tx_hash"),
   },
   (table) => [
     uniqueIndex("uq_commission_ledger_accrual").on(
@@ -160,10 +145,6 @@ export const commissionLedger = pgTable(
     ),
     index("ix_commission_ledger_beneficiary_status").on(
       table.beneficiaryId,
-      table.status,
-    ),
-    index("ix_commission_ledger_unlock_status").on(
-      table.unlockAt,
       table.status,
     ),
     check(
@@ -179,36 +160,11 @@ export const commissionConfig = pgTable(
     id: smallint("id").primaryKey(),
     l1Tiers: jsonb("l1_tiers").notNull(),
     l2Bps: integer("l2_bps").notNull(),
-    payoutMode: payoutModeEnum("payout_mode").notNull().default("instant"),
-    deferDays: integer("defer_days").notNull().default(0),
-    minPayoutUsdt: numeric("min_payout_usdt", { precision: 18, scale: 6 })
-      .notNull()
-      .default("50.000000"),
   },
   (table) => [
     check(
       "ck_l2_bps_range",
       sql`${table.l2Bps} >= 0 AND ${table.l2Bps} <= 10000`,
-    ),
-  ],
-);
-
-export const payoutBatches = pgTable(
-  "payout_batches",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    beneficiaryId: uuid("beneficiary_id")
-      .notNull()
-      .references(() => users.id),
-    amountUsdt: numeric("amount_usdt", { precision: 18, scale: 6 }).notNull(),
-    txHash: text("tx_hash"),
-    broadcastAt: timestamp("broadcast_at", { withTimezone: true }),
-    status: batchStatusEnum("status").notNull().default("pending"),
-  },
-  (table) => [
-    index("ix_payout_batches_beneficiary_status").on(
-      table.beneficiaryId,
-      table.status,
     ),
   ],
 );
@@ -230,7 +186,6 @@ export const nudgesSent = pgTable(
 export const opsKillSwitch = pgTable("ops_kill_switch", {
   id: smallint("id").primaryKey(),
   buyDisabled: boolean("buy_disabled").notNull().default(false),
-  payoutDisabled: boolean("payout_disabled").notNull().default(false),
   reason: text("reason"),
   setAt: timestamp("set_at", { withTimezone: true }),
 });

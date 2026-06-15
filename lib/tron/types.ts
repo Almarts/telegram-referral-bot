@@ -1,7 +1,6 @@
 export interface Signer {
   readonly address: string;
   sign(rawTx: unknown): Promise<{ txId: string }>;
-  /** Hex private key (for raw signing outside tronweb). */
   privateKeyHex(): Promise<string>;
 }
 
@@ -23,6 +22,14 @@ export interface TronService {
 
   /** Return a signer for the hot wallet (commission payouts). */
   hotSigner(): Signer;
+
+  /** Verify a USDT transfer by txHash — check it went to expectedTo. */
+  verifyUsdtTransfer(txHash: string, expectedTo: string): Promise<{
+    confirmed: boolean;
+    from: string;
+    to: string;
+    amountUsdt: string;
+  } | null>;
 
   /** List USDT TRC20 transfers to an address. */
   listUsdtTransfersTo(address: string, opts?: { sinceMs?: number; limit?: number }): Promise<UsdtTransfer[]>;
