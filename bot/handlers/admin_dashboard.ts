@@ -92,6 +92,7 @@ export async function handleDashboard(ctx: Context): Promise<void> {
       inline_keyboard: [
         [
           { text: "🔄 Refresh", callback_data: "admin:dashboard" },
+          { text: "📋 All users", callback_data: "admin:users" },
         ],
       ],
     },
@@ -108,5 +109,57 @@ export async function handleDashboardCallback(ctx: Context): Promise<void> {
 
   if (action === "dashboard") {
     await handleDashboard(ctx);
+  } else if (action === "users") {
+    await handleAllUsers(ctx);
   }
+}
+
+/**
+ * Show all users with their latest payment dates.
+ */
+async function handleAllUsers(ctx: Context): Promise<void> {
+  const db = getDb();
+
+  const rows = await db
+    .select({
+      tgUsername: users.tgUsername,
+      tgUserId: users.tgUserId,
+      role: users.role,
+      createdAt: users.createdAt,
+      lastPaidAt: sql`max(${invoices.paidAt})`,
+      totalPaid: sql<string>`coalesce(sum(case when ${invoices.status} = 'paid' then ${invoices.amountUsdt} else '0' end), '0')`,
+      paidCount: sql<number>`count(*) filter (where ${invoices.status} = 'paid')::int`,
+    })
+    .from(users)
+    .leftJoin(invoices, eq(invoices.userId, users.id))
+    .groupBy(users.id, users.tgUsername, users.tgUserId, users.role, users.createdAt)
+    .orderBy(desc(sql`max(${invoices.paidAt}) nulls last`), desc(users.createdAt))
+    .limit(50);
+
+  if (rows.length === 0) {
+    await ctx.reply("No users yet.");
+    return;
+  }
+
+  const lines: string[] = [
+    `📋 *All Users (${rows.length})*`,
+    "",
+    ...rows.map((r, i) => {
+      const name = r.tgUsername ? `@${r.tgUsername}` : `id:${r.tgUserId}`;
+      const role = r.role === "creator" ? "🎥" : "👤";
+      const lastPaid = r.lastPaidAt
+        ? new Date(r.lastPaidAt).toISOString().slice(0, 10)
+        : "—";
+      return `${i + 1}. ${role} ${name} | paid: *${r.totalPaid} USDT* (${r.paidCount}x) | last: ${lastPaid} | joined: ${new Date(r.createdAt).toISOString().slice(0, 10)}`;
+    }),
+  ];
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "🔙 Back to Dashboard", callback_data: "admin:dashboard" }],
+      ],
+    },
+  });
 }
