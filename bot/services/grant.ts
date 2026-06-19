@@ -12,7 +12,7 @@ export function formatGrantMessage(params: {
   planName: string;
 }): string {
   return [
-    `✅ Платёж подтверждён! Твоя ссылка-приглашение на тариф *${params.planName}*:`,
+    `✅ Платёж подтверждён! Твоя ссылка-приглашение *${params.planName}*:`,
     "",
     params.inviteLink,
     "",
