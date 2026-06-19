@@ -6,7 +6,7 @@ import { gte } from "@/lib/money";
 import { getEnv } from "@/lib/env";
 import { isUniqueViolation } from "@/lib/db-errors";
 
-const ONE_TRX_SUN = 1_000_000n;
+const ONE_TRX_SUN = 10_000_000n;
 
 export interface SettleResult {
   settled: boolean;
