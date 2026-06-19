@@ -1,5 +1,4 @@
 import type { TronService, UsdtTransfer } from "./types";
-import { add, sub } from "@/lib/money";
 
 export interface FakeTronControls {
   __setUsdtBalance(address: string, amount: string): void;
@@ -26,26 +25,12 @@ export function createFakeTron(): TronService & { controls: FakeTronControls } {
   }
 
   const service: TronService = {
-    deriveDepositAddress(index: number) {
-      return { address: fakeAddress("T", index) };
+    async verifyTrxTransfer(txHash: string, expectedTo: string, minTrxSun: bigint) {
+      return null;
     },
 
-    signerForIndex(index: number) {
-      const address = fakeAddress("T", index);
-      return {
-        address,
-        sign: async () => ({ txId: makeTxHash() }),
-        privateKeyHex: async () => "0000000000000000000000000000000000000000000000000000000000000001",
-      };
-    },
-
-    hotSigner() {
-      const address = fakeAddress("H", 0);
-      return {
-        address,
-        sign: async () => ({ txId: makeTxHash() }),
-        privateKeyHex: async () => "0000000000000000000000000000000000000000000000000000000000000002",
-      };
+    async verifyUsdtTransfer(txHash: string, expectedTo: string) {
+      return null;
     },
 
     async listUsdtTransfersTo(address: string, opts?: { sinceMs?: number; limit?: number }) {
@@ -55,7 +40,6 @@ export function createFakeTron(): TronService & { controls: FakeTronControls } {
       if (sinceMs !== undefined) {
         filtered = filtered.filter((t) => t.blockTimestamp * 1000 >= sinceMs);
       }
-      // Sort most-recent-first so limit returns the newest transfers
       filtered.sort((a, b) => a.blockTimestamp - b.blockTimestamp);
       if (opts?.limit !== undefined) {
         filtered = filtered.slice(-opts.limit);
@@ -69,32 +53,6 @@ export function createFakeTron(): TronService & { controls: FakeTronControls } {
 
     async trxBalanceSun(address: string) {
       return trxBalances.get(address) ?? 0n;
-    },
-
-    async sendUsdt({ fromAddress, toAddress, amount }) {
-      sendUsdtCount++;
-      const txHash = makeTxHash();
-
-      const fromBal = usdtBalances.get(fromAddress) ?? "0.000000";
-      usdtBalances.set(fromAddress, sub(fromBal, amount));
-
-      const toBal = usdtBalances.get(toAddress) ?? "0.000000";
-      usdtBalances.set(toAddress, add(toBal, amount));
-
-      return { txHash };
-    },
-
-    async sendTrx({ fromAddress, toAddress, amountSun }) {
-      sendTrxCount++;
-      const txHash = makeTxHash();
-
-      const fromBal = trxBalances.get(fromAddress) ?? 0n;
-      trxBalances.set(fromAddress, fromBal - amountSun);
-
-      const toBal = trxBalances.get(toAddress) ?? 0n;
-      trxBalances.set(toAddress, toBal + amountSun);
-
-      return { txHash };
     },
   };
 

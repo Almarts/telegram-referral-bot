@@ -98,6 +98,76 @@ export function createRealTron(opts: RealTronOpts): TronService {
   }
 
   return {
+    async verifyTrxTransfer(txHash: string, expectedTo: string, minTrxSun: bigint): Promise<{
+      confirmed: boolean;
+      from: string;
+      to: string;
+      amountSun: bigint;
+    } | null> {
+      try {
+        // Get transaction info from TronGrid
+        // NOTE: /v1/transactions/{txHash} returns 404 for many confirmed TXes.
+        // Using /wallet/gettransactionbyid instead (works reliably).
+        const tx = await tronPost<Record<string, unknown>>("/wallet/gettransactionbyid", {
+          value: txHash,
+        });
+        if (!tx || !tx.txID) return null;
+        // Check it's confirmed (has blockNumber)
+        const txInfo = await tronPost<Record<string, unknown>>("/wallet/gettransactioninfobyid", {
+          value: txHash,
+        });
+        if (!txInfo || !txInfo.blockNumber) return null;
+
+        const rawData = tx.raw_data as Record<string, unknown> | undefined;
+        const contracts = rawData?.contract as Array<Record<string, unknown>> | undefined;
+
+        if (!contracts?.length) return null;
+
+        const contract = contracts[0] as Record<string, unknown>;
+        const param = contract.parameter as Record<string, unknown> | undefined;
+        const value = param?.value as Record<string, unknown> | undefined;
+
+        if (!value) return null;
+
+        const toAddress = String(value.to_address ?? "");
+        const amount = BigInt(String(value.amount ?? "0"));
+
+        // Decode base58 address
+        if (!toAddress) return null;
+
+        // Check recipient matches expected
+        if (toAddress !== expectedTo && toAddress !== expectedTo) {
+          // Try base58 decoding both
+          const { getTronWeb } = await import("./tronweb-client");
+          const tw = getTronWeb(opts.apiKey);
+          try {
+            const decodedTo = tw.address.fromHex(String(value.to_address ?? ""));
+            if (decodedTo !== expectedTo) return null;
+          } catch { return null; }
+        }
+
+        // Check amount
+        if (amount < minTrxSun) return null;
+
+        const fromHex = String(tx.owner_address ?? tx.ownerAddress ?? "");
+        let from = fromHex;
+        try {
+          const { getTronWeb } = await import("./tronweb-client");
+          const tw = getTronWeb(opts.apiKey);
+          from = tw.address.fromHex(fromHex);
+        } catch { /* use hex */ }
+
+        return {
+          confirmed: true,
+          from,
+          to: expectedTo,
+          amountSun: amount,
+        };
+      } catch {
+        return null;
+      }
+    },
+
     async verifyUsdtTransfer(txHash: string, expectedTo: string): Promise<{
       confirmed: boolean;
       from: string;

@@ -3,18 +3,16 @@ import { getActivePlans } from "@/bot/services/invoices";
 import { getDb } from "@/db/client";
 import { users, subscriptions } from "@/db/schema";
 import { eq, and, gt } from "drizzle-orm";
+import { handleBuy } from "./buy";
 
 /**
- * /renew — show plan picker for renewal.
- *
- * The stacking rule is applied at settlement time in settle.ts:
- * if the user has an active subscription, the new one stacks (starts_at =
- * old.ends_at). Otherwise it starts now.
+ * /renew — продление подписки.
+ * Берёт единственный активный план и сразу создаёт инвойс.
  */
 export async function handleRenew(ctx: Context): Promise<void> {
   const tgUser = ctx.from;
   if (!tgUser) {
-    await ctx.reply("Could not identify user.");
+    await ctx.reply("❌ Не удалось определить пользователя.");
     return;
   }
 
@@ -27,7 +25,7 @@ export async function handleRenew(ctx: Context): Promise<void> {
     .then((r) => r[0] ?? null);
 
   if (!user) {
-    await ctx.reply("Please /start the bot first.");
+    await ctx.reply("Запустите /start");
     return;
   }
 
@@ -36,16 +34,16 @@ export async function handleRenew(ctx: Context): Promise<void> {
     plans = await getActivePlans();
   } catch (err) {
     console.error("getActivePlans error:", err);
-    await ctx.reply("Something went wrong. Please try again later.");
+    await ctx.reply("❌ Что-то пошло не так. Попробуйте позже.");
     return;
   }
 
   if (plans.length === 0) {
-    await ctx.reply("No plans are currently available.");
+    await ctx.reply("❌ Нет доступных тарифов.");
     return;
   }
 
-  // Check if user has an active subscription for contextual messaging
+  // Check if user has an active subscription
   const now = new Date();
   const activeSub = await db
     .select({ id: subscriptions.id })
@@ -60,18 +58,9 @@ export async function handleRenew(ctx: Context): Promise<void> {
     .limit(1)
     .then((r) => r[0] ?? null);
 
-  const header = activeSub
-    ? "Your subscription is active. Renewing will stack your new plan on top — no lost time. Choose a plan:"
-    : "Choose a plan to renew:";
-
-  await ctx.reply(header, {
-    reply_markup: {
-      inline_keyboard: plans.map((plan) => [
-        {
-          text: `${plan.name} — ${plan.priceUsdt} USDT (${plan.durationDays} days)`,
-          callback_data: `buy:${plan.id}`,
-        },
-      ]),
-    },
-  });
+  if (activeSub) {
+    await ctx.reply("✅ У вас уже есть активная подписка. Используйте /buy, чтобы продлить.");
+  } else {
+    await ctx.reply("🔄 У вас нет активной подписки. Используйте /buy для покупки.");
+  }
 }

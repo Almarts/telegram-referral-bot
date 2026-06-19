@@ -8,6 +8,14 @@ export interface UsdtTransfer {
 }
 
 export interface TronService {
+  /** Verify a TRX transfer by txHash — check it went to expectedTo and amount >= minTrxSun. */
+  verifyTrxTransfer(txHash: string, expectedTo: string, minTrxSun: bigint): Promise<{
+    confirmed: boolean;
+    from: string;
+    to: string;
+    amountSun: bigint;
+  } | null>;
+
   /** Verify a USDT transfer by txHash — check it went to expectedTo. */
   verifyUsdtTransfer(txHash: string, expectedTo: string): Promise<{
     confirmed: boolean;

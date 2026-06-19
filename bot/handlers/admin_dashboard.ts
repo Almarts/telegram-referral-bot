@@ -55,7 +55,7 @@ export async function handleDashboard(ctx: Context): Promise<void> {
 
     db
       .select({
-        total: sql<string>`coalesce(sum(${commissionLedger.amountUsdt}), '0')`,
+        total: sql<string>`coalesce(sum(${commissionLedger.amountUsdt}), 0)`,
       })
       .from(commissionLedger)
       .where(eq(commissionLedger.status, "accrued"))
@@ -66,9 +66,15 @@ export async function handleDashboard(ctx: Context): Promise<void> {
         tgUsername: users.tgUsername,
         tgUserId: users.tgUserId,
         createdAt: users.createdAt,
+        lastPaidAt: sql`max(${invoices.paidAt})`,
       })
       .from(users)
-      .orderBy(desc(users.createdAt))
+      .innerJoin(invoices, and(
+        eq(invoices.userId, users.id),
+        eq(invoices.status, "paid"),
+      ))
+      .groupBy(users.id, users.tgUsername, users.tgUserId, users.createdAt)
+      .orderBy(desc(sql`max(${invoices.paidAt})`))
       .limit(5),
   ]);
 
@@ -76,27 +82,41 @@ export async function handleDashboard(ctx: Context): Promise<void> {
     "🏠 *Dashboard*",
     "",
     `👥 Users: *${totalUsers}* | ✅ Active: *${activeSubs}* | ❌ Expired: *${expiredSubs}*`,
-    `📦 Paid today: *${paidToday}* | Total rev: *${totalRevenue} USDT*`,
-    `💰 Accrued commissions: *${totalCommissionAccrued} USDT*`,
+    `📦 Paid today: *${paidToday}* | Total rev: *${totalRevenue} TRX*`,
+    `💰 Accrued commissions: *${totalCommissionAccrued} TRX*`,
     "",
-    "*Latest users:*",
+    "*Latest paid:*",
     ...latestUsers.map(
       (u) =>
-        `  • ${u.tgUsername ? `@${u.tgUsername}` : `id:${u.tgUserId}`} — ${new Date(u.createdAt).toISOString().slice(0, 10)}`,
+        `  • ${u.tgUsername ? `@${u.tgUsername}` : `id:${u.tgUserId}`} — ${u.lastPaidAt ? new Date(u.lastPaidAt).toISOString().slice(0, 10) : "—"}`,
     ),
   ];
 
-  await ctx.reply(lines.join("\n"), {
-    parse_mode: "Markdown",
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: "🔄 Refresh", callback_data: "admin:dashboard" },
-          { text: "📋 All users", callback_data: "admin:users" },
+  // Try with text-only first, then with Markdown
+  try {
+    await ctx.reply(lines.join("\n"), {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "🔄 Refresh", callback_data: "admin:dashboard" },
+            { text: "📋 All users", callback_data: "admin:users" },
+          ],
         ],
-      ],
-    },
-  });
+      },
+    });
+  } catch {
+    await ctx.reply(lines.join("\n"), {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "🔄 Refresh", callback_data: "admin:dashboard" },
+            { text: "📋 All users", callback_data: "admin:users" },
+          ],
+        ],
+      },
+    });
+  }
 }
 
 /** Handle callback navigation from dashboard buttons */
@@ -110,14 +130,19 @@ export async function handleDashboardCallback(ctx: Context): Promise<void> {
   if (action === "dashboard") {
     await handleDashboard(ctx);
   } else if (action === "users") {
-    await handleAllUsers(ctx);
+    const filter = data.split(":")[2];
+    if (filter === "paid") {
+      await handleAllUsers(ctx, true);
+    } else {
+      await handleAllUsers(ctx, false);
+    }
   }
 }
 
 /**
- * Show all users with their latest payment dates.
+ * Show users — optionally only those who paid.
  */
-async function handleAllUsers(ctx: Context): Promise<void> {
+async function handleAllUsers(ctx: Context, onlyPaid: boolean = false): Promise<void> {
   const db = getDb();
 
   const rows = await db
@@ -141,16 +166,28 @@ async function handleAllUsers(ctx: Context): Promise<void> {
     return;
   }
 
+  // If onlyPaid=true, filter to those with at least one payment
+  const filtered = onlyPaid ? rows.filter((r) => r.paidCount > 0) : rows;
+
+  if (filtered.length === 0) {
+    await ctx.reply("Нет пользователей с оплатой.");
+    return;
+  }
+
+  const title = onlyPaid
+    ? `📋 *Оплатившие (${filtered.length})*`
+    : `📋 *Все пользователи (${filtered.length})*`;
+
   const lines: string[] = [
-    `📋 *All Users (${rows.length})*`,
+    title,
     "",
-    ...rows.map((r, i) => {
+    ...filtered.map((r, i) => {
       const name = r.tgUsername ? `@${r.tgUsername}` : `id:${r.tgUserId}`;
       const role = r.role === "creator" ? "🎥" : "👤";
       const lastPaid = r.lastPaidAt
         ? new Date(r.lastPaidAt).toISOString().slice(0, 10)
         : "—";
-      return `${i + 1}. ${role} ${name} | paid: *${r.totalPaid} USDT* (${r.paidCount}x) | last: ${lastPaid} | joined: ${new Date(r.createdAt).toISOString().slice(0, 10)}`;
+      return `${i + 1}. ${role} ${name} | paid: *${r.totalPaid} TRX* (${r.paidCount}x) | last: ${lastPaid}`;
     }),
   ];
 
@@ -158,8 +195,28 @@ async function handleAllUsers(ctx: Context): Promise<void> {
     parse_mode: "Markdown",
     reply_markup: {
       inline_keyboard: [
+        [
+          { text: onlyPaid ? "📋 Все" : "💳 Оплатившие", callback_data: `admin:users:${onlyPaid ? "all" : "paid"}` },
+        ],
         [{ text: "🔙 Back to Dashboard", callback_data: "admin:dashboard" }],
       ],
     },
   });
+}
+
+/**
+ * Handle admin:users:paid / admin:users:all callback to toggle filter
+ */
+async function handleUsersFilter(ctx: Context): Promise<void> {
+  const data = ctx.callbackQuery?.data;
+  if (!data) return;
+  const parts = data.split(":");
+  if (parts[1] !== "users") return;
+  const filter = parts[2] ?? "all";
+  await ctx.answerCallbackQuery();
+  if (filter === "paid") {
+    await handleAllUsers(ctx, true);
+  } else {
+    await handleAllUsers(ctx, false);
+  }
 }

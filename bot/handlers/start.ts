@@ -7,7 +7,7 @@ import type { ReplyKeyboardMarkup } from "grammy/types";
 
 function regularKeyboard(): ReplyKeyboardMarkup {
   return {
-    keyboard: [[{ text: "Buy access" }]],
+    keyboard: [[{ text: "Купить доступ" }]],
     resize_keyboard: true,
   };
 }
@@ -15,22 +15,35 @@ function regularKeyboard(): ReplyKeyboardMarkup {
 function creatorKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
-      [{ text: "Buy access" }],
-      [{ text: "My referrals" }, { text: "Earnings" }],
+      [{ text: "Купить доступ" }],
+      [{ text: "Мои рефералы" }, { text: "Доход" }],
     ],
     resize_keyboard: true,
   };
+}
+
+/** Infer a reasonable UTC offset from Telegram language_code */
+function inferUtcOffset(lang: string | undefined): number | null {
+  if (!lang) return null;
+  const l = lang.toLowerCase();
+  // Russian-speaking users are typically UTC+3 (Moscow)
+  if (l === "ru" || l === "be" || l === "uk") return 180;
+  // Europe: many CET/CEST users
+  if (["de", "fr", "es", "it", "pt", "nl", "pl", "tr", "el", "ro", "hu", "cs", "sv", "da", "fi", "nb", "hr", "sr", "bg"].includes(l)) return 60;
+  // UK / IE
+  if (["en", "ga"].includes(l)) return 0;
+  return null;
 }
 
 export async function handleStart(ctx: Context): Promise<void> {
   const tgUser = ctx.from;
   if (!tgUser) return;
 
-  const name = tgUser.first_name ?? "there";
+  const name = tgUser.first_name ?? "там";
 
   const db = getDb();
   const user = await db
-    .select({ role: users.role })
+    .select({ id: users.id, role: users.role, utcOffset: users.utcOffset })
     .from(users)
     .where(eq(users.tgUserId, BigInt(tgUser.id)))
     .limit(1)
@@ -38,21 +51,34 @@ export async function handleStart(ctx: Context): Promise<void> {
 
   const isCreator = user?.role === "creator";
 
+  // Save UTC offset if not set yet
+  if (user && user.utcOffset == null) {
+    const offset = inferUtcOffset(tgUser.language_code);
+    if (offset !== null) {
+      await db
+        .update(users)
+        .set({ utcOffset: offset })
+        .where(eq(users.id, user.id))
+        .catch((err) => console.error("Failed to save utcOffset:", err));
+    }
+  }
+
   let lines: string[];
   let keyboard: ReplyKeyboardMarkup;
 
   if (isCreator) {
     lines = [
-      `Welcome, ${name}!`,
+      `👋 Привет, ${name}!`,
       "",
-      "Choose an option below:",
+      "Выбери опцию ниже:",
     ];
     keyboard = creatorKeyboard();
   } else {
     lines = [
-      `Welcome, ${name}!`,
+      `👋 Привет, ${name}!`,
       "",
-      "Tap Buy access to purchase a subscription.",
+      "Нажми «Купить доступ», чтобы приобрести подписку.",
+      "После оплаты ты получишь ссылку-приглашение в закрытый канал.",
     ];
     keyboard = regularKeyboard();
   }

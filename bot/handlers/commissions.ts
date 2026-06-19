@@ -4,8 +4,7 @@ import { users, commissionLedger } from "@/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
 
 /**
- * /commissions — admin command to see all creators with their referral debts
- * and mark them as paid.
+ * /commissions — админская команда для просмотра долгов реферальных комиссий.
  */
 export async function handleCommissions(ctx: Context): Promise<void> {
   const db = getDb();
@@ -26,19 +25,19 @@ export async function handleCommissions(ctx: Context): Promise<void> {
     .orderBy(desc(sql`sum(${commissionLedger.amountUsdt})`));
 
   if (rows.length === 0) {
-    await ctx.reply("✅ No outstanding commissions.");
+    await ctx.reply("✅ Нет начисленных комиссий.");
     return;
   }
 
   const lines: string[] = [
-    "💰 *Outstanding Commissions*",
+    "💰 *Начисленные комиссии*",
     "",
     ...rows.map((r, i) => {
       const name = r.tgUsername ? `@${r.tgUsername}` : `id:${r.tgUserId}`;
-      return `${i + 1}. ${name} — *${r.total} USDT* (${r.count} referral${r.count > 1 ? "s" : ""})`;
+      return `${i + 1}. ${name} — *${r.total} TRX* (${r.count} рефер${r.count > 1 ? "алов" : "ал"})`;
     }),
     "",
-    "Total: *" + rows.reduce((s, r) => s + parseFloat(r.total), 0).toFixed(6) + " USDT*",
+    "Итого: *" + rows.reduce((s, r) => s + parseFloat(r.total), 0).toFixed(6) + " TRX*",
   ];
 
   await ctx.reply(lines.join("\n"), {
@@ -46,7 +45,7 @@ export async function handleCommissions(ctx: Context): Promise<void> {
     reply_markup: {
       inline_keyboard: rows.map((r) => [
         {
-          text: `✅ Paid ${r.tgUsername ? "@" + r.tgUsername : r.tgUserId.toString()} — ${r.total} USDT`,
+          text: `✅ Выплачено ${r.tgUsername ? "@" + r.tgUsername : r.tgUserId.toString()} — ${r.total} TRX`,
           callback_data: `comm:pay:${r.beneficiaryId}`,
         },
       ]),
@@ -65,7 +64,6 @@ export async function handleCommissionsCallback(ctx: Context): Promise<void> {
 
   const db = getDb();
 
-  // ALTER TYPE must be done separately, but enum value 'paid' is already added via migration
   // Mark all accrued commissions for this beneficiary as paid
   const result = await db
     .update(commissionLedger)
@@ -79,7 +77,7 @@ export async function handleCommissionsCallback(ctx: Context): Promise<void> {
     .returning({ count: sql<number>`count(*)::int` });
 
   await ctx.answerCallbackQuery({
-    text: `✅ Marked as paid.`,
+    text: `✅ Отмечено как выплачено.`,
   });
 
   // Refresh the commissions list

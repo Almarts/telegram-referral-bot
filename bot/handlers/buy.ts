@@ -23,12 +23,28 @@ async function isBuyDisabled(): Promise<boolean> {
   return ks?.buyDisabled ?? false;
 }
 
+/** Format expiresAt with user's UTC offset */
+function formatExpiry(expiresAt: Date, utcOffset: number | null): string {
+  const offset = utcOffset ?? 0;
+  const local = new Date(expiresAt.getTime() + offset * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const h = pad(local.getUTCHours());
+  const m = pad(local.getUTCMinutes());
+  const d = pad(local.getUTCDate());
+  const mo = pad(local.getUTCMonth() + 1);
+  const y = local.getUTCFullYear();
+  const sign = offset >= 0 ? "+" : "";
+  const tzH = Math.floor(Math.abs(offset) / 60);
+  const tzM = Math.abs(offset) % 60;
+  return `${d}.${mo}.${y} ${h}:${m} (UTC${sign}${tzH}:${String(tzM).padStart(2, "0")})`;
+}
+
 /**
- * /buy — show a picker of active subscription plans.
+ * /buy — сразу создаёт инвойс с единственным активным планом.
  */
 export async function handleBuy(ctx: Context): Promise<void> {
   if (await isBuyDisabled()) {
-    await ctx.reply("Purchases are temporarily disabled. Please try again later.");
+    await ctx.reply("🛒 Покупки временно приостановлены. Попробуйте позже.");
     return;
   }
 
@@ -37,89 +53,61 @@ export async function handleBuy(ctx: Context): Promise<void> {
     plans = await getActivePlans();
   } catch (err) {
     console.error("getActivePlans error:", err);
-    await ctx.reply("Something went wrong. Please try again later.");
+    await ctx.reply("❌ Что-то пошло не так. Попробуйте позже.");
     return;
   }
 
   if (plans.length === 0) {
-    await ctx.reply("No plans are currently available. Please try again later.");
+    await ctx.reply("❌ Нет доступных тарифов. Попробуйте позже.");
     return;
   }
 
-  await ctx.reply("Choose a plan:", {
-    reply_markup: {
-      inline_keyboard: plans.map((plan) => [
-        {
-          text: `${plan.name} — ${plan.priceUsdt} USDT (${plan.durationDays} days)`,
-          callback_data: `buy:${plan.id}`,
-        },
-      ]),
-    },
-  });
-}
-
-/**
- * Handle callback_query "buy:<planId>".
- * Creates an invoice and shows the cold wallet address for payment.
- */
-export async function handleBuyCallback(ctx: Context): Promise<void> {
-  const data = ctx.callbackQuery?.data;
-  if (!data?.startsWith("buy:")) return;
-
-  const planId = parseInt(data.split(":")[1], 10);
-  if (isNaN(planId)) {
-    await ctx.answerCallbackQuery({ text: "Invalid plan." });
-    return;
-  }
-
-  if (await isBuyDisabled()) {
-    await ctx.answerCallbackQuery({ text: "Purchases are temporarily disabled." });
-    return;
-  }
+  // Use the first (only) active plan
+  const plan = plans[0];
 
   const tgUser = ctx.from;
   if (!tgUser) {
-    await ctx.answerCallbackQuery({ text: "Could not identify user." });
+    await ctx.reply("❌ Не удалось определить пользователя.");
     return;
   }
 
   const db = getDb();
-
   const user = await db
-    .select({ id: users.id })
+    .select({ id: users.id, utcOffset: users.utcOffset })
     .from(users)
     .where(eq(users.tgUserId, BigInt(tgUser.id)))
     .limit(1)
     .then((r) => r[0] ?? null);
 
   if (!user) {
-    await ctx.answerCallbackQuery({ text: "Please /start the bot first." });
+    await ctx.reply("Пожалуйста, сначала запустите /start");
     return;
   }
 
   const rateOk = await cooldown(`rate:invoice:${tgUser.id}`, INVOICE_COOLDOWN_S);
   if (!rateOk) {
-    await ctx.answerCallbackQuery({ text: `Please wait ${INVOICE_COOLDOWN_S}s between requests.` });
+    await ctx.reply(`⏳ Подождите ${INVOICE_COOLDOWN_S} секунд между запросами.`);
     return;
   }
 
   try {
-    const invoice = await createInvoice({ userId: user.id, planId });
-
+    const invoice = await createInvoice({ userId: user.id, planId: plan.id });
     const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
+    const expiryStr = formatExpiry(invoice.expiresAt, user.utcOffset);
+
     const msgLines = [
-      `*Plan:* ${invoice.planName}`,
-      `*Amount:* ${invoice.amountUsdt} USDT`,
-      "",
-      `Send exactly ${invoice.amountUsdt} USDT (USDT TRC20) to:`,
+      `📋 *Счёт на оплату*`,
+      ``,
+      `📌 Тариф: *${invoice.planName}*`,
+      `💵 Сумма: *${invoice.amountUsdt} USDT*`,
+            ``,
+            `Отправьте ровно *${invoice.amountUsdt} USDT* на кошелёк:`
       `\`${coldAddress}\``,
-      "",
-      `Expires: ${invoice.expiresAt.toISOString().replace("T", " ").slice(0, 16)} UTC`,
-      "",
-      "After sending, send me the TXID (transaction hash).",
-      "",
-      "Example: `/settle a1b2c3d4e5f6...`",
-      "Or just paste the TXID here.",
+      ``,
+      `⏳ Действителен до: ${expiryStr}`,
+      ``,
+      `После отправки пришлите мне TXID (хэш транзакции).`,
+      `Просто вставьте его сюда в чат.`,
     ];
     const msgText = msgLines.join("\n");
 
@@ -130,16 +118,94 @@ export async function handleBuyCallback(ctx: Context): Promise<void> {
       await ctx.reply(msgText.replace(/[*`]/g, ""));
     });
 
-    await ctx.answerCallbackQuery({ text: "Invoice created. Send the TXID after payment." });
+  } catch (err) {
+    console.error("handleBuy:", err);
+    ctx.reply("❌ Не удалось создать счёт. Попробуйте ещё раз.").catch(() => {});
+  }
+}
+
+/**
+ * Handle callback_query "buy:<planId>" — legacy, kept for renew.
+ * Creates an invoice and shows the cold wallet address for payment.
+ */
+export async function handleBuyCallback(ctx: Context): Promise<void> {
+  const data = ctx.callbackQuery?.data;
+  if (!data?.startsWith("buy:")) return;
+
+  const planId = parseInt(data.split(":")[1], 10);
+  if (isNaN(planId)) {
+    await ctx.answerCallbackQuery({ text: "Неверный тариф." });
+    return;
+  }
+
+  if (await isBuyDisabled()) {
+    await ctx.answerCallbackQuery({ text: "🛒 Покупки временно приостановлены." });
+    return;
+  }
+
+  const tgUser = ctx.from;
+  if (!tgUser) {
+    await ctx.answerCallbackQuery({ text: "Не удалось определить пользователя." });
+    return;
+  }
+
+  const db = getDb();
+
+  const user = await db
+    .select({ id: users.id, utcOffset: users.utcOffset })
+    .from(users)
+    .where(eq(users.tgUserId, BigInt(tgUser.id)))
+    .limit(1)
+    .then((r) => r[0] ?? null);
+
+  if (!user) {
+    await ctx.answerCallbackQuery({ text: "Сначала запустите /start" });
+    return;
+  }
+
+  const rateOk = await cooldown(`rate:invoice:${tgUser.id}`, INVOICE_COOLDOWN_S);
+  if (!rateOk) {
+    await ctx.answerCallbackQuery({ text: `⏳ Подождите ${INVOICE_COOLDOWN_S} секунд.` });
+    return;
+  }
+
+  try {
+    const invoice = await createInvoice({ userId: user.id, planId });
+    const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
+    const expiryStr = formatExpiry(invoice.expiresAt, user.utcOffset);
+
+    const msgLines = [
+      `📋 *Счёт на оплату*`,
+      ``,
+      `📌 Тариф: *${invoice.planName}*`,
+      `💵 Сумма: *${invoice.amountUsdt} USDT*`,
+            ``,
+            `Отправьте ровно *${invoice.amountUsdt} USDT* на кошелёк:`
+      `\`${coldAddress}\``,
+      ``,
+      `⏳ Действителен до: ${expiryStr}`,
+      ``,
+      `После отправки пришлите мне TXID (хэш транзакции).`,
+      `Просто вставьте его сюда в чат.`,
+    ];
+    const msgText = msgLines.join("\n");
+
+    await ctx.reply(msgText, {
+      parse_mode: "Markdown",
+    }).catch(async (err) => {
+      console.error("handleBuyCallback: Markdown reply failed:", err.message);
+      await ctx.reply(msgText.replace(/[*`]/g, ""));
+    });
+
+    await ctx.answerCallbackQuery({ text: "✅ Счёт создан. После оплаты пришлите TXID." });
   } catch (err) {
     console.error("handleBuyCallback:", err);
-    ctx.answerCallbackQuery({ text: "Failed to create invoice. Try again." }).catch(() => {});
+    ctx.answerCallbackQuery({ text: "❌ Ошибка создания счёта." }).catch(() => {});
   }
 }
 
 /**
  * Handle TXID submitted by user — verify and settle.
- * Called when user pastes a TXID as text.
  */
 export async function handleTxid(ctx: Context): Promise<void> {
   const tgUser = ctx.from;
@@ -150,7 +216,6 @@ export async function handleTxid(ctx: Context): Promise<void> {
 
   // Validate TXID format (TRON tx hashes are 64 hex chars)
   if (!/^[0-9a-fA-F]{64}$/.test(txId)) {
-    // Not a TXID — silently ignore
     return;
   }
 
@@ -174,17 +239,17 @@ export async function handleTxid(ctx: Context): Promise<void> {
     .then((r) => r[0] ?? null);
 
   if (!inv) {
-    await ctx.reply("You don't have any pending invoices. Use /buy first.");
+    await ctx.reply("У вас нет ожидающих счетов. Используйте /buy.");
     return;
   }
 
-  await ctx.reply("Verifying payment...");
+  await ctx.reply("⏳ Проверяю платёж...");
 
   try {
     const result = await settleByTxId(inv.id, txId);
 
     if (result.settled) {
-      await ctx.reply("✅ Payment confirmed! You should receive an invite link shortly.");
+      await ctx.reply("✅ Платёж подтверждён! Ссылка-приглашение уже в пути.");
 
       // Send invite link
       if (result.userId && result.planName) {
@@ -220,16 +285,16 @@ export async function handleTxid(ctx: Context): Promise<void> {
       }
     } else if (result.underpayment) {
       await ctx.reply(
-        "We detected the transaction but the amount is less than required. Please send the full amount.",
+        "⚠️ Мы нашли транзакцию, но сумма меньше требуемой. Пожалуйста, отправьте полную сумму.",
       );
     } else {
       await ctx.reply(
-        "Transaction not found or not yet confirmed on the blockchain. " +
-        "Make sure you sent USDT TRC20 to the correct address and try again in a few minutes.",
+        "❌ Транзакция не найдена или ещё не подтверждена в блокчейне. " +
+        "Убедитесь, что отправили USDT на правильный адрес, и попробуйте через пару минут.",
       );
     }
   } catch (err) {
     console.error("handleTxid:", err);
-    await ctx.reply("Something went wrong verifying your payment. Please try again.");
+    await ctx.reply("❌ Ошибка при проверке платежа. Попробуйте ещё раз.");
   }
 }

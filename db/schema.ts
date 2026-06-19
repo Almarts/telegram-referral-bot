@@ -55,6 +55,7 @@ export const users = pgTable(
     parentRefCode: text("parent_ref_code"),
     role: text("role").notNull().default("regular"),
     vipBps: integer("vip_bps"),
+    utcOffset: smallint("utc_offset"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

@@ -17,35 +17,39 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
     .then((r) => r[0] ?? null);
 
   if (!user) {
-    await ctx.reply("Please /start the bot first.");
+    await ctx.reply("Запустите /start");
     return;
   }
 
   const stats = await getReferralStats(user.id);
 
   const lines = [
-    `Your referral code: ${user.refCode ?? "—"}`,
-    `Share link: t.me/${ctx.me.username}?start=${user.refCode ?? ""}`,
+    `👥 *Мои рефералы*`,
     "",
-    `L1 referrals: ${stats.l1Count}`,
-    `L1 lifetime paid invoices: ${stats.l1LifetimePaid}`,
-    `Your commission rate: ${(stats.l1TierBps / 100).toFixed(1)}%`,
+    `🔗 Твой реферальный код: \`${user.refCode ?? "—"}\``,
+    `📎 Ссылка: t.me/${ctx.me.username}?start=${user.refCode ?? ""}`,
+    "",
+    `📊 *Уровень 1 (L1)* — прямые рефералы: *${stats.l1Count}*`,
+    `💰 Оплаченных инвойсов L1: *${stats.l1LifetimePaid}*`,
+    `📈 Твоя комиссия: *${(stats.l1TierBps / 100).toFixed(1)}%*`,
   ];
 
   if (stats.nextTier) {
     const nextRate = (stats.nextTier.bps / 100).toFixed(1);
     const need = stats.nextTier.min - stats.l1LifetimePaid;
     lines.push(
-      `Next tier: ${nextRate}% at ${stats.nextTier.min} paid invoices (${need} more needed)`,
+      `🏆 Следующий уровень: ${nextRate}% при ${stats.nextTier.min} оплатах (нужно ещё ${need})`,
     );
   }
 
   lines.push(
     "",
-    `L2 referrals: ${stats.l2Count}`,
-    `L2 lifetime paid invoices: ${stats.l2LifetimePaid}`,
-    `You earn 10% on L2.`,
+    `📊 *Уровень 2 (L2)* — рефералы твоих рефералов: *${stats.l2Count}*`,
+    `💰 Оплаченных инвойсов L2: *${stats.l2LifetimePaid}*`,
+    `📈 Ты получаешь 10% от комиссий L1 на L2.`,
   );
 
-  await ctx.reply(lines.join("\n"));
+  await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" }).catch(async () => {
+    await ctx.reply(lines.join("\n").replace(/[*`]/g, ""));
+  });
 }

@@ -6,6 +6,8 @@ import { gte } from "@/lib/money";
 import { getEnv } from "@/lib/env";
 import { isUniqueViolation } from "@/lib/db-errors";
 
+const ONE_TRX_SUN = 1_000_000n;
+
 export interface SettleResult {
   settled: boolean;
   invoiceId: string;
@@ -24,8 +26,8 @@ export function computeRenewalStart(now: Date, activeSubEndsAt?: Date): Date {
 }
 
 /**
- * Verify a USDT transaction by TXID and settle the invoice.
- * User provides the TXID after sending USDT to the cold wallet.
+ * Verify a TRX transaction by TXID and settle the invoice.
+ * User sends 1 TRX to the cold wallet and provides the TXID.
  */
 export async function settleByTxId(invoiceId: string, txId: string): Promise<SettleResult> {
   const db = getDb();
@@ -44,15 +46,14 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
     return { settled: false, invoiceId };
   }
 
-  // 2. Verify the TXID on-chain
-  const txInfo = await tron.verifyUsdtTransfer(txId, coldAddress);
+  // 2. Verify the TXID on-chain — check TRX transfer to cold wallet
+  const txInfo = await tron.verifyTrxTransfer(txId, coldAddress, ONE_TRX_SUN);
   if (!txInfo) {
     return { settled: false, invoiceId };
   }
 
-  // 3. Check amount is sufficient
-  if (!gte(txInfo.amountUsdt, invoice.amountUsdt)) {
-    // Underpayment
+  // 3. Check amount is sufficient (at least 1 TRX = 1_000_000 SUN)
+  if (txInfo.amountSun < ONE_TRX_SUN) {
     if (!invoice.hasPartialPayment) {
       await db
         .update(invoices)

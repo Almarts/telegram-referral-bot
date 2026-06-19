@@ -28,8 +28,8 @@ export function createBot(token: string): Bot<Context> {
   bot.command("buy", handleBuy);
   bot.command("renew", handleRenew);
 
-  // Text-based menu handlers — creators see referrals/earnings
-  bot.hears("My referrals", async (ctx) => {
+  // Text-based menu handlers — Russian keyboard buttons
+  bot.hears("Мои рефералы", async (ctx) => {
     const tgUser = ctx.from;
     if (!tgUser) return;
     const { getDb } = await import("@/db/client");
@@ -46,7 +46,7 @@ export function createBot(token: string): Bot<Context> {
     await handleMyReferrals(ctx);
   });
 
-  bot.hears("Earnings", async (ctx) => {
+  bot.hears("Доход", async (ctx) => {
     const tgUser = ctx.from;
     if (!tgUser) return;
     const { getDb } = await import("@/db/client");
@@ -63,7 +63,42 @@ export function createBot(token: string): Bot<Context> {
     await handleEarnings(ctx);
   });
 
-  bot.hears("Buy access", handleBuy);
+  bot.hears("Купить доступ", handleBuy);
+
+  // Admin dashboard
+  bot.command("admin", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    try {
+      await handleDashboard(ctx);
+    } catch (e) {
+      console.error("ADMIN_CMD_ERR", e instanceof Error ? e.message : String(e));
+      try { await ctx.reply("⚠️ Ошибка загрузки панели. Проверьте логи."); } catch {}
+    }
+  });
+
+  bot.hears("", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser || ctx.message?.text !== "/admin") return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    try {
+      await handleDashboard(ctx);
+    } catch (e) {
+      console.error("ADMIN_HEARS_ERR", e instanceof Error ? e.message : String(e));
+      try { await ctx.reply("⚠️ Ошибка загрузки панели. Проверьте логи."); } catch {}
+    }
+  });
+
+  bot.command("commissions", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    await handleCommissions(ctx);
+  });
 
   // Handle TXID — user pastes transaction hash after payment
   bot.on("message:text", async (ctx) => {
@@ -73,23 +108,6 @@ export function createBot(token: string): Bot<Context> {
       await handleTxid(ctx);
     }
     // Otherwise silently ignore unrecognized text messages
-  });
-
-  // Admin dashboard
-  bot.command("admin", async (ctx) => {
-    const tgUser = ctx.from;
-    if (!tgUser) return;
-    const adminIds = getEnv().ADMIN_TG_IDS;
-    if (!adminIds.includes(BigInt(tgUser.id))) return;
-    await handleDashboard(ctx);
-  });
-
-  bot.command("commissions", async (ctx) => {
-    const tgUser = ctx.from;
-    if (!tgUser) return;
-    const adminIds = getEnv().ADMIN_TG_IDS;
-    if (!adminIds.includes(BigInt(tgUser.id))) return;
-    await handleCommissions(ctx);
   });
 
   bot.on("callback_query:data", async (ctx) => {
