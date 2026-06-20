@@ -51,3 +51,6 @@ scripts/run_sweep.py
 scripts/check_invoices.py
 deploy.mjs
 sweep-env.json
+git_token.txt
+gh_token.txt
+gh_check.py
