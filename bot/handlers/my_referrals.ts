@@ -8,7 +8,5 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
   const tgUser = ctx.from;
   if (!tgUser) return;
 
-  await ctx.reply("👥 *Мои рефералы*\n\nПока нет рефералов. Приглашай друзей по своей реферальной ссылке!", { parse_mode: "Markdown" }).catch(() => {
-    ctx.reply("👥 Мои рефералы\n\nПока нет рефералов.").catch(() => {});
-  });
+  await ctx.reply("👥 Мои рефералы\n\nПока нет рефералов. Приглашай друзей по своей реферальной ссылке!");
 }
