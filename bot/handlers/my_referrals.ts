@@ -26,10 +26,9 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
   const lines = [
     `👥 *Мои рефералы*`,
     "",
-    `🔗 Твой реферальный код: \`${user.refCode ?? "—"}\``,
-    `📎 Ссылка: t.me/${ctx.me.username}?start=${user.refCode ?? ""}`,
+    "🔗 Твой реферальный код: " + user.refCode ?? "—",
     "",
-    `📊 *Уровень 1 (L1)* — прямые рефералы: *${stats.l1Count}*`,
+    `📊 *Уровень 1* — прямые рефералы: *${stats.l1Count}*`,
     `💰 Оплаченных инвойсов L1: *${stats.l1LifetimePaid}*`,
     `📈 Твоя комиссия: *${(stats.l1TierBps / 100).toFixed(1)}%*`,
   ];
@@ -44,7 +43,7 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
 
   lines.push(
     "",
-    `📊 *Уровень 2 (L2)* — рефералы твоих рефералов: *${stats.l2Count}*`,
+    `📊 *Уровень 2* — рефералы твоих рефералов: *${stats.l2Count}*`,
     `💰 Оплаченных инвойсов L2: *${stats.l2LifetimePaid}*`,
     `📈 Ты получаешь 10% от комиссий L1 на L2.`,
   );
