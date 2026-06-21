@@ -16,7 +16,7 @@ export function formatGrantMessage(params: {
     "",
     params.inviteLink,
     "",
-    "Ссылка действительна 1 час и может быть использована один раз.",
+    "Ссылка действительна до первого использования.",
   ].join("\n");
 }
 
@@ -62,7 +62,6 @@ export async function grantChannelAccess(params: GrantParams): Promise<void> {
   try {
     const invite = await bot.api.createChatInviteLink(Number(channelId), {
       member_limit: 1,
-      expire_date: Math.floor(Date.now() / 1000) + 3600, // 1 hour
     });
 
     const message = formatGrantMessage({
