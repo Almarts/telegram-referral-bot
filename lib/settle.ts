@@ -1,8 +1,6 @@
 import { getDb } from "@/db/client";
 import { invoices, subscriptions, subscriptionPlans } from "@/db/schema";
 import { eq, and, gt, desc } from "drizzle-orm";
-import { getTron } from "@/lib/tron";
-import { gte } from "@/lib/money";
 import { getEnv } from "@/lib/env";
 import { isUniqueViolation } from "@/lib/db-errors";
 
@@ -39,9 +37,117 @@ export function computeRenewalStart(now: Date, activeSubEndsAt?: Date): Date {
  * Verify a TRX transaction by TXID and settle the invoice.
  * User sends TRX to the cold wallet and provides the TXID.
  */
+/**
+ * Check a TXID on TronGrid directly and diagnose why it fails.
+ * Returns a detailed failure reason, or the parsed tx info if successful.
+ */
+async function checkTxidDirect(
+  txId: string,
+  coldAddress: string,
+  invoiceCreatedAt: Date,
+): Promise<
+  | { ok: true; from: string; to: string; amountSun: bigint; blockTimestamp: number }
+  | { ok: false; reason: "not_found" | "wrong_address" | "underpaid" | "too_old"; detail?: string }
+> {
+  const apiKey = getEnv().TRONGRID_API_KEY;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (apiKey) headers["TRON-PRO-API-KEY"] = apiKey;
+
+  try {
+    // Step 1: Check tx exists on chain
+    const txRes = await fetch("https://api.trongrid.io/wallet/gettransactionbyid", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ value: txId }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const tx = await txRes.json() as Record<string, unknown>;
+    if (!tx || !tx.txID) {
+      return { ok: false, reason: "not_found", detail: "TXID not found on chain" };
+    }
+
+    // Step 2: Check it's confirmed
+    const infoRes = await fetch("https://api.trongrid.io/wallet/gettransactioninfobyid", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ value: txId }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const txInfo = await infoRes.json() as Record<string, unknown>;
+    if (!txInfo || !txInfo.blockNumber) {
+      return { ok: false, reason: "not_found", detail: "Transaction not confirmed" };
+    }
+
+    const rawData = tx.raw_data as Record<string, unknown> | undefined;
+    const contracts = rawData?.contract as Array<Record<string, unknown>> | undefined;
+    if (!contracts?.length) {
+      return { ok: false, reason: "not_found", detail: "No contracts in tx" };
+    }
+
+    const value = contracts[0]?.parameter?.value as Record<string, unknown> | undefined;
+    if (!value) {
+      return { ok: false, reason: "not_found", detail: "No value in contract" };
+    }
+
+    const toHex = String(value.to_address ?? "");
+    const amountSun = BigInt(String(value.amount ?? "0"));
+    const blockTimestamp = Number(txInfo.blockTimeStamp ?? 0) / 1000;
+
+    // Decode address
+    const { getTronWeb } = await import("./tron/tronweb-client");
+    const tw = getTronWeb(apiKey);
+    let toAddr: string;
+    try {
+      toAddr = tw.address.fromHex(toHex);
+    } catch {
+      toAddr = toHex;
+    }
+
+    // Check recipient
+    if (toAddr !== coldAddress) {
+      return {
+        ok: false,
+        reason: "wrong_address",
+        detail: `Sent to ${toAddr}, expected ${coldAddress}`,
+      };
+    }
+
+    // Check amount
+    if (amountSun < 10_000_000n) {
+      return {
+        ok: false,
+        reason: "underpaid",
+        detail: `Received ${Number(amountSun) / 1_000_000} TRX, minimum 10 TRX`,
+      };
+    }
+
+    // Check timestamp
+    const invoiceTs = Math.floor(invoiceCreatedAt.getTime() / 1000);
+    if (blockTimestamp && blockTimestamp < invoiceTs) {
+      return {
+        ok: false,
+        reason: "too_old",
+        detail: `TX from ${new Date(blockTimestamp * 1000).toISOString()}, invoice created ${invoiceCreatedAt.toISOString()}`,
+      };
+    }
+
+    let fromAddr: string;
+    try {
+      fromAddr = tw.address.fromHex(String(tx.owner_address ?? tx.ownerAddress ?? ""));
+    } catch {
+      fromAddr = String(tx.owner_address ?? tx.ownerAddress ?? "");
+    }
+
+    return { ok: true, from: fromAddr, to: toAddr, amountSun, blockTimestamp };
+  } catch (err) {
+    return { ok: false, reason: "not_found", detail: `TronGrid error: ${err}` };
+  }
+}
+
 export async function settleByTxId(invoiceId: string, txId: string): Promise<SettleResult> {
   const db = getDb();
-  const tron = getTron();
   const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
 
   // 1. Fetch pending invoice
@@ -56,35 +162,8 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
     return { status: "no_invoice", invoiceId };
   }
 
-  // 2. Verify the TXID on-chain — check TRX transfer to cold wallet
-  const txInfo = await tron.verifyTrxTransfer(txId, coldAddress, ONE_TRX_SUN);
-  if (!txInfo) {
-    // TXID doesn't exist or failed basic checks
-    return { status: "not_found", invoiceId };
-  }
-
-  // 3. Check recipient address
-  if (txInfo.to !== coldAddress) {
-    return { status: "wrong_address", invoiceId };
-  }
-
-  // 4. Check that TX is NOT before invoice creation (prevents old TXID reuse)
-  if (txInfo.blockTimestamp && txInfo.blockTimestamp < Math.floor(invoice.createdAt.getTime() / 1000)) {
-    return { status: "too_old", invoiceId };
-  }
-
-  // 5. Check amount is sufficient
-  if (txInfo.amountSun < ONE_TRX_SUN) {
-    if (!invoice.hasPartialPayment) {
-      await db
-        .update(invoices)
-        .set({ hasPartialPayment: true })
-        .where(eq(invoices.id, invoiceId));
-    }
-    return { status: "underpaid", invoiceId };
-  }
-
-  // 6. Check if txHash already used by ANY invoice in the system (including non-open)
+  // 2. Check if txHash already used by ANY invoice in the system (including non-open)
+  // Do this FIRST — if it's in our DB, it was already used regardless of blockchain state
   const alreadyUsed = await db
     .select({ id: invoices.id })
     .from(invoices)
@@ -95,7 +174,7 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
     return { status: "duplicate_txid", invoiceId };
   }
 
-  // 7. Check if user already has an active subscription
+  // 3. Check if user already has an active subscription (also indicates previous payment)
   const existingActiveSub = await db
     .select({ id: subscriptions.id })
     .from(subscriptions)
@@ -111,6 +190,16 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
 
   if (existingActiveSub) {
     return { status: "duplicate_txid", invoiceId };
+  }
+
+  // 4. Check TXID on blockchain with detailed diagnostics
+  const check = await checkTxidDirect(txId, coldAddress, invoice.createdAt);
+
+  if (!check.ok) {
+    return {
+      status: check.reason,
+      invoiceId,
+    };
   }
 
   // 8. Get plan for subscription duration
