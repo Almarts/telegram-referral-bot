@@ -1,4 +1,7 @@
 import type { Context } from "grammy";
+import { getDb } from "@/db/client";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { getReferralStats } from "@/bot/services/dashboard";
 
 export async function handleMyReferrals(ctx: Context): Promise<void> {
@@ -6,8 +9,20 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
   if (!tgUser) return;
 
   try {
-    const userId = String(tgUser.id);
-    const stats = await getReferralStats(userId);
+    const db = getDb();
+    const user = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.tgUserId, BigInt(tgUser.id)))
+      .limit(1)
+      .then((r) => r[0] ?? null);
+
+    if (!user) {
+      await ctx.reply("My referrals\n\nNo account found. Start the bot first.");
+      return;
+    }
+
+    const stats = await getReferralStats(user.id);
 
     let msg = "My referrals\n\n";
     msg += `Direct (L1): ${stats.l1Count} users\n`;
