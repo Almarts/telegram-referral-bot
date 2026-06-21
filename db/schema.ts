@@ -68,6 +68,7 @@ export const subscriptionPlans = pgTable("subscription_plans", {
   name: text("name").notNull(),
   durationDays: integer("duration_days").notNull(),
   priceUsdt: numeric("price_usdt", { precision: 18, scale: 6 }).notNull(),
+  currency: text("currency").notNull().default("USDT"),
   active: boolean("active").notNull().default(true),
 });
 
@@ -81,7 +82,7 @@ export const invoices = pgTable(
     planId: smallint("plan_id")
       .notNull()
       .references(() => subscriptionPlans.id),
-    depositAddress: text("deposit_address").notNull().unique(),
+    depositAddress: text("deposit_address").notNull(),
     derivIndex: integer("deriv_index").notNull(),
     amountUsdt: numeric("amount_usdt", { precision: 18, scale: 6 }).notNull(),
     status: invoiceStatusEnum("status").notNull().default("open"),

@@ -14,6 +14,7 @@ export interface TronService {
     from: string;
     to: string;
     amountSun: bigint;
+    blockTimestamp: number;
   } | null>;
 
   /** Verify a USDT transfer by txHash — check it went to expectedTo. */

@@ -8,14 +8,24 @@ import { isUniqueViolation } from "@/lib/db-errors";
 
 const ONE_TRX_SUN = 10_000_000n;
 
+export type SettleStatus =
+  | "paid"              // ✅ всё ок, доступ можно дать
+  | "not_found"         // ❌ TXID не найден в блокчейне
+  | "wrong_address"     // ❌ транзакция не на тот адрес
+  | "underpaid"         // ❌ сумма меньше нужной
+  | "too_old"           // ❌ транзакция старше заявки
+  | "duplicate_txid"    // ❌ TXID уже использован
+  | "no_invoice"        // ❌ нет открытого инвойса
+  | "no_plan"           // ❌ план не найден
+  ;
+
 export interface SettleResult {
-  settled: boolean;
+  status: SettleStatus;
   invoiceId: string;
   userId?: string;
   planName?: string;
   subscriptionId?: string;
   txHash?: string;
-  underpayment?: boolean;
 }
 
 export function computeRenewalStart(now: Date, activeSubEndsAt?: Date): Date {
@@ -27,7 +37,7 @@ export function computeRenewalStart(now: Date, activeSubEndsAt?: Date): Date {
 
 /**
  * Verify a TRX transaction by TXID and settle the invoice.
- * User sends 1 TRX to the cold wallet and provides the TXID.
+ * User sends TRX to the cold wallet and provides the TXID.
  */
 export async function settleByTxId(invoiceId: string, txId: string): Promise<SettleResult> {
   const db = getDb();
@@ -43,16 +53,27 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
     .then((rows) => rows[0] ?? null);
 
   if (!invoice) {
-    return { settled: false, invoiceId };
+    return { status: "no_invoice", invoiceId };
   }
 
   // 2. Verify the TXID on-chain — check TRX transfer to cold wallet
   const txInfo = await tron.verifyTrxTransfer(txId, coldAddress, ONE_TRX_SUN);
   if (!txInfo) {
-    return { settled: false, invoiceId };
+    // TXID doesn't exist or failed basic checks
+    return { status: "not_found", invoiceId };
   }
 
-  // 3. Check amount is sufficient (at least 1 TRX = 1_000_000 SUN)
+  // 3. Check recipient address
+  if (txInfo.to !== coldAddress) {
+    return { status: "wrong_address", invoiceId };
+  }
+
+  // 4. Check that TX is NOT before invoice creation (prevents old TXID reuse)
+  if (txInfo.blockTimestamp && txInfo.blockTimestamp < Math.floor(invoice.createdAt.getTime() / 1000)) {
+    return { status: "too_old", invoiceId };
+  }
+
+  // 5. Check amount is sufficient
   if (txInfo.amountSun < ONE_TRX_SUN) {
     if (!invoice.hasPartialPayment) {
       await db
@@ -60,10 +81,10 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
         .set({ hasPartialPayment: true })
         .where(eq(invoices.id, invoiceId));
     }
-    return { settled: false, invoiceId, underpayment: true };
+    return { status: "underpaid", invoiceId };
   }
 
-  // 4. Check if txHash already used (idempotency)
+  // 6. Check if txHash already used by ANY invoice in the system (including non-open)
   const alreadyUsed = await db
     .select({ id: invoices.id })
     .from(invoices)
@@ -71,10 +92,28 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
     .limit(1);
 
   if (alreadyUsed.length > 0) {
-    return { settled: false, invoiceId };
+    return { status: "duplicate_txid", invoiceId };
   }
 
-  // 5. Get plan for subscription duration
+  // 7. Check if user already has an active subscription
+  const existingActiveSub = await db
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.userId, invoice.userId),
+        eq(subscriptions.status, "active"),
+        gt(subscriptions.endsAt, new Date()),
+      ),
+    )
+    .limit(1)
+    .then((r) => r[0] ?? null);
+
+  if (existingActiveSub) {
+    return { status: "duplicate_txid", invoiceId };
+  }
+
+  // 8. Get plan for subscription duration
   const plan = await db
     .select()
     .from(subscriptionPlans)
@@ -83,10 +122,10 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
     .then((rows) => rows[0] ?? null);
 
   if (!plan) {
-    return { settled: false, invoiceId };
+    return { status: "no_plan", invoiceId };
   }
 
-  // 6. Settle
+  // 9. Settle — paid
   try {
     const now = new Date();
 
@@ -129,7 +168,7 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
       .where(eq(invoices.id, invoiceId));
 
     return {
-      settled: true,
+      status: "paid",
       invoiceId,
       userId: invoice.userId,
       planName: plan.name,
@@ -138,7 +177,7 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
     };
   } catch (err: unknown) {
     if (isUniqueViolation(err)) {
-      return { settled: false, invoiceId };
+      return { status: "duplicate_txid", invoiceId };
     }
     throw err;
   }

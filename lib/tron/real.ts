@@ -162,6 +162,7 @@ export function createRealTron(opts: RealTronOpts): TronService {
           from,
           to: expectedTo,
           amountSun: amount,
+          blockTimestamp: Math.floor(Number(txInfo.blockNumber) * 3),
         };
       } catch {
         return null;

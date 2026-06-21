@@ -2,7 +2,7 @@ import type { Context } from "grammy";
 import { getActivePlans, createInvoice } from "@/bot/services/invoices";
 import { getDb } from "@/db/client";
 import { users, opsKillSwitch, invoices, subscriptionPlans } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { settleByTxId } from "@/lib/settle";
 import { grantChannelAccess } from "@/bot/services/grant";
 import { cooldown } from "@/lib/kv";
@@ -99,9 +99,9 @@ export async function handleBuy(ctx: Context): Promise<void> {
       `📋 *Счёт на оплату*`,
       ``,
       `📌 Тариф: *${invoice.planName}*`,
-      `💵 Сумма: *${invoice.amountUsdt} USDT*`,
-            ``,
-            `Отправьте ровно *${invoice.amountUsdt} USDT* на кошелёк:`
+      `💵 Сумма: *${invoice.amountUsdt} ${invoice.currency}*`,
+      ``,
+      `Отправьте ровно *${invoice.amountUsdt} ${invoice.currency}* на кошелёк:`,
       `\`${coldAddress}\``,
       ``,
       `⏳ Действителен до: ${expiryStr}`,
@@ -120,7 +120,16 @@ export async function handleBuy(ctx: Context): Promise<void> {
 
   } catch (err) {
     console.error("handleBuy:", err);
-    ctx.reply("❌ Не удалось создать счёт. Попробуйте ещё раз.").catch(() => {});
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack?.slice(0, 1000) ?? null : null;
+    // Log to DB for debugging
+    try {
+      const db = getDb();
+      await db.execute(
+        sql`INSERT INTO error_log (message, stack, user_id) VALUES (${errMsg}, ${errStack}, ${tgUser?.id ?? null})`
+      );
+    } catch {}
+    ctx.reply(`❌ Ошибка: ${errMsg}`).catch(() => {});
   }
 }
 
@@ -178,9 +187,9 @@ export async function handleBuyCallback(ctx: Context): Promise<void> {
       `📋 *Счёт на оплату*`,
       ``,
       `📌 Тариф: *${invoice.planName}*`,
-      `💵 Сумма: *${invoice.amountUsdt} USDT*`,
-            ``,
-            `Отправьте ровно *${invoice.amountUsdt} USDT* на кошелёк:`
+      `💵 Сумма: *${invoice.amountUsdt} ${invoice.currency}*`,
+      ``,
+      `Отправьте ровно *${invoice.amountUsdt} ${invoice.currency}* на кошелёк:`,
       `\`${coldAddress}\``,
       ``,
       `⏳ Действителен до: ${expiryStr}`,
@@ -248,50 +257,66 @@ export async function handleTxid(ctx: Context): Promise<void> {
   try {
     const result = await settleByTxId(inv.id, txId);
 
-    if (result.settled) {
-      await ctx.reply("✅ Платёж подтверждён! Ссылка-приглашение уже в пути.");
+    switch (result.status) {
+      case "paid":
+        await ctx.reply("✅ Платёж подтверждён! Ссылка-приглашение уже в пути.");
 
-      // Send invite link
-      if (result.userId && result.planName) {
-        const bot = getBot();
-        const channelId = getEnv().DEFAULT_CHANNEL_ID;
-        const invite = await bot.api.createChatInviteLink(Number(channelId), {
-          member_limit: 1,
-          expire_date: Math.floor(Date.now() / 1000) + 3600,
-        });
+        // Send invite link
+        if (result.userId && result.planName) {
+          const bot = getBot();
+          const channelId = getEnv().DEFAULT_CHANNEL_ID;
+          const invite = await bot.api.createChatInviteLink(Number(channelId), {
+            member_limit: 1,
+            expire_date: Math.floor(Date.now() / 1000) + 3600,
+          });
 
-        // Grant access
-        await grantChannelAccess({
-          userId: result.userId,
-          planName: result.planName,
-        }).catch((err) => console.error("grant:", err));
+          // Grant access
+          await grantChannelAccess({
+            userId: result.userId,
+            planName: result.planName,
+          }).catch((err) => console.error("grant:", err));
 
-        // Accrue commissions
-        await accrueCommissions(result.invoiceId).catch((err) =>
-          console.error("commissions:", err),
-        );
+          // Accrue commissions
+          await accrueCommissions(result.invoiceId).catch((err) =>
+            console.error("commissions:", err),
+          );
 
-        await bot.api.sendMessage(
-          Number(tgUser.id),
-          formatGrantMessage({ inviteLink: invite.invite_link, planName: result.planName }),
-          { parse_mode: "Markdown" },
-        ).catch(async (err) => {
-          console.error("invite DM failed:", err.message);
           await bot.api.sendMessage(
             Number(tgUser.id),
-            formatGrantMessage({ inviteLink: invite.invite_link, planName: result.planName }).replace(/\*/g, ""),
-          );
-        });
-      }
-    } else if (result.underpayment) {
-      await ctx.reply(
-        "⚠️ Мы нашли транзакцию, но сумма меньше требуемой. Пожалуйста, отправьте полную сумму.",
-      );
-    } else {
-      await ctx.reply(
-        "❌ Транзакция не найдена или ещё не подтверждена в блокчейне. " +
-        "Убедитесь, что отправили USDT на правильный адрес, и попробуйте через пару минут.",
-      );
+            formatGrantMessage({ inviteLink: invite.invite_link, planName: result.planName }),
+            { parse_mode: "Markdown" },
+          ).catch(async (err) => {
+            console.error("invite DM failed:", err.message);
+            await bot.api.sendMessage(
+              Number(tgUser.id),
+              formatGrantMessage({ inviteLink: invite.invite_link, planName: result.planName }).replace(/\*/g, ""),
+            );
+          });
+        }
+        break;
+
+      case "underpaid":
+        await ctx.reply("⚠️ Мы нашли транзакцию, но сумма меньше требуемой (10 TRX). Пожалуйста, отправьте полную сумму.");
+        break;
+
+      case "not_found":
+        await ctx.reply("❌ Транзакция не найдена в блокчейне. Убедитесь, что вы указали правильный TXID, и попробуйте ещё раз.");
+        break;
+
+      case "wrong_address":
+        await ctx.reply("❌ Транзакция отправлена не на тот адрес. Убедитесь, что отправляете TRX на указанный кошелёк.");
+        break;
+
+      case "too_old":
+        await ctx.reply("❌ Этот TXID от более старой транзакции. Пожалуйста, отправьте новую оплату и пришлите свежий TXID.");
+        break;
+
+      case "duplicate_txid":
+        await ctx.reply("❌ Этот TXID уже был использован ранее.");
+        break;
+
+      default:
+        await ctx.reply("❌ Не удалось проверить платёж. Попробуйте ещё раз.");
     }
   } catch (err) {
     console.error("handleTxid:", err);

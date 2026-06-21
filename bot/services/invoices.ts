@@ -15,6 +15,7 @@ export interface Invoice {
   userId: string;
   planId: number;
   planName: string;
+  currency: string;
   coldAddress: string;
   amountUsdt: string;
   expiresAt: Date;
@@ -81,6 +82,7 @@ export async function createInvoice(params: CreateInvoiceParams): Promise<Invoic
     userId: invoice.userId,
     planId: invoice.planId,
     planName: plan.name,
+    currency: plan.currency,
     coldAddress: invoice.depositAddress!,
     amountUsdt: invoice.amountUsdt,
     expiresAt: invoice.expiresAt,
