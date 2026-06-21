@@ -22,54 +22,37 @@ export async function handleEarnings(ctx: Context): Promise<void> {
       return;
     }
 
-    // Get all commissions for this user
+    // Get only accrued commissions (not yet paid out)
     const rows = await db
       .select({
         amountUsdt: commissionLedger.amountUsdt,
-        status: commissionLedger.status,
       })
       .from(commissionLedger)
-      .where(eq(commissionLedger.beneficiaryId, user.id));
+      .where(
+        and(
+          eq(commissionLedger.beneficiaryId, user.id),
+          eq(commissionLedger.status, "accrued"),
+        ),
+      );
 
-    // Calculate totals by status
-    let accruedSum = 0n;
-    let paidSum = 0n;
-    let pendingSum = 0n;
+    if (rows.length === 0) {
+      await ctx.reply("Earnings\n\nNo pending earnings.");
+      return;
+    }
 
+    let total = 0n;
     for (const row of rows) {
       const [i, f = ""] = row.amountUsdt.split(".");
-      const val = BigInt(i + f.padEnd(6, "0").slice(0, 6));
-      if (row.status === "paid") {
-        paidSum += val;
-      } else if (row.status === "pending") {
-        pendingSum += val;
-      } else {
-        accruedSum += val;
-      }
+      total += BigInt(i + f.padEnd(6, "0").slice(0, 6));
     }
 
-    const totalSum = accruedSum + paidSum + pendingSum;
+    const intPart = total / 1_000_000n;
+    const fracPart = total % 1_000_000n;
+    const fmt = `${intPart}.${String(fracPart).padStart(6, "0")}`;
 
-    const fmt = (v: bigint) => {
-      const intPart = v / 1_000_000n;
-      const fracPart = v % 1_000_000n;
-      return `${intPart}.${String(fracPart).padStart(6, "0")}`;
-    };
+    await ctx.reply(`Earnings
 
-    let msg = `Earnings
-
-Total all time: ${fmt(totalSum)} TRX`;
-    if (accruedSum > 0n) {
-      msg += `\nAccrued: ${fmt(accruedSum)} TRX`;
-    }
-    if (paidSum > 0n) {
-      msg += `\nPaid out: ${fmt(paidSum)} TRX`;
-    }
-    if (pendingSum > 0n) {
-      msg += `\nPending: ${fmt(pendingSum)} TRX`;
-    }
-
-    await ctx.reply(msg);
+Available: ${fmt} TRX`);
   } catch (e) {
     await ctx.reply("Error loading earnings. Try again later.");
   }
