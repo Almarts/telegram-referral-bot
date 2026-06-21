@@ -3,8 +3,32 @@ import { invoices, subscriptions, subscriptionPlans } from "@/db/schema";
 import { eq, and, gt, desc } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import { isUniqueViolation } from "@/lib/db-errors";
+import { createHash } from "node:crypto";
 
+const TRONGRID = "https://api.trongrid.io";
 const ONE_TRX_SUN = 10_000_000n;
+
+// Base58 alphabet for Tron address decoding
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function hexToBase58(hex: string): string {
+  let h = hex;
+  if (h.startsWith("0x")) h = h.slice(2);
+  if (!h.startsWith("41")) h = "41" + h;
+  const buf = Buffer.from(h, "hex");
+  const full = Buffer.concat([buf, createHash("sha256").update(createHash("sha256").update(buf).digest()).digest().slice(0, 4)]);
+  let num = BigInt("0x" + full.toString("hex"));
+  let result = "";
+  while (num > 0n) {
+    result = B58[Number(num % 58n)] + result;
+    num /= 58n;
+  }
+  for (const b of buf) {
+    if (b === 0) result = B58[0] + result;
+    else break;
+  }
+  return result;
+}
 
 export type SettleStatus =
   | "paid"              // ✅ всё ок, доступ можно дать
