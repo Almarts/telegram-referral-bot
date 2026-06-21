@@ -25,27 +25,26 @@ export async function handleCommissions(ctx: Context): Promise<void> {
     .orderBy(desc(sql`sum(${commissionLedger.amountUsdt})`));
 
   if (rows.length === 0) {
-    await ctx.reply("✅ Нет начисленных комиссий.");
+    await ctx.reply("Net nacheleannych commissii.");
     return;
   }
 
   const lines: string[] = [
-    "💰 *Начисленные комиссии*",
+    "Nacheleannye commissii",
     "",
     ...rows.map((r, i) => {
       const name = r.tgUsername ? `@${r.tgUsername}` : `id:${r.tgUserId}`;
-      return `${i + 1}. ${name} — *${r.total} TRX* (${r.count} рефер${r.count > 1 ? "алов" : "ал"})`;
+      return `${i + 1}. ${name} — ${r.total} TRX (${r.count} refs)`;
     }),
     "",
-    "Итого: *" + rows.reduce((s, r) => s + parseFloat(r.total), 0).toFixed(6) + " TRX*",
+    "Total: " + rows.reduce((s, r) => s + parseFloat(r.total), 0).toFixed(6) + " TRX",
   ];
 
   await ctx.reply(lines.join("\n"), {
-    parse_mode: "Markdown",
     reply_markup: {
       inline_keyboard: rows.map((r) => [
         {
-          text: `✅ Выплачено ${r.tgUsername ? "@" + r.tgUsername : r.tgUserId.toString()} — ${r.total} TRX`,
+          text: `VYPLACHENO @${r.tgUsername} — ${r.total} TRX`,
           callback_data: `comm:pay:${r.beneficiaryId}`,
         },
       ]),
@@ -65,7 +64,7 @@ export async function handleCommissionsCallback(ctx: Context): Promise<void> {
   const db = getDb();
 
   // Mark all accrued commissions for this beneficiary as paid
-  const result = await db
+  await db
     .update(commissionLedger)
     .set({ status: "paid" })
     .where(
@@ -73,11 +72,10 @@ export async function handleCommissionsCallback(ctx: Context): Promise<void> {
         eq(commissionLedger.beneficiaryId, beneficiaryId),
         eq(commissionLedger.status, "accrued"),
       ),
-    )
-    .returning({ count: sql<number>`count(*)::int` });
+    );
 
   await ctx.answerCallbackQuery({
-    text: `✅ Отмечено как выплачено.`,
+    text: "Pomesheno kak vyplacheno.",
   });
 
   // Refresh the commissions list
