@@ -15,7 +15,6 @@ function regularKeyboard(): ReplyKeyboardMarkup {
 function creatorKeyboard(): ReplyKeyboardMarkup {
   return {
     keyboard: [
-      [{ text: "Купить доступ" }],
       [{ text: "Мои рефералы" }, { text: "Доход" }],
     ],
     resize_keyboard: true,
