@@ -155,13 +155,14 @@ export async function accrueCommissions(invoiceId: string): Promise<void> {
       .then((r) => r[0] ?? null);
 
     if (l2) {
-      const l2Amount = computeCommissionAmount(l1Amount, config.l2Bps);
+      // L2 gets a percentage of the FULL invoice amount, not of L1's commission
+      const l2Amount = computeCommissionAmount(invoice.amountUsdt, config.l2Bps);
 
       await insertLedgerIdempotent({
         invoiceId: invoice.id,
         beneficiaryId: l2.id,
         level: 2,
-        basisUsdt: l1Amount,
+        basisUsdt: invoice.amountUsdt,
         rateBps: config.l2Bps,
         amountUsdt: l2Amount,
         status: "accrued",
