@@ -8,6 +8,9 @@ import { handleDashboard } from "./handlers/admin_dashboard";
 import { handleCommissions, handleCommissionsCallback } from "./handlers/commissions";
 import { onboardUser } from "./services/onboarding";
 import { getEnv } from "@/lib/env";
+import { getDb } from "@/db/client";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
 export function createBot(token: string): Bot<Context> {
   const bot = new Bot<Context>(token);
@@ -30,37 +33,41 @@ export function createBot(token: string): Bot<Context> {
 
   // Text-based menu handlers — Russian keyboard buttons
   bot.hears("Мои рефералы", async (ctx) => {
-    const tgUser = ctx.from;
-    if (!tgUser) return;
-    const { getDb } = await import("@/db/client");
-    const { users } = await import("@/db/schema");
-    const { eq } = await import("drizzle-orm");
-    const db = getDb();
-    const user = await db
-      .select({ role: users.role })
-      .from(users)
-      .where(eq(users.tgUserId, BigInt(tgUser.id)))
-      .limit(1)
-      .then((r) => r[0] ?? null);
-    if (user?.role !== "creator") return;
-    await handleMyReferrals(ctx);
+    try {
+      const tgUser = ctx.from;
+      if (!tgUser) return;
+      const db = getDb();
+      const user = await db
+        .select({ role: users.role })
+        .from(users)
+        .where(eq(users.tgUserId, BigInt(tgUser.id)))
+        .limit(1)
+        .then((r) => r[0] ?? null);
+      if (user?.role !== "creator") return;
+      await handleMyReferrals(ctx);
+    } catch (e) {
+      console.error("Мои рефералы error:", e);
+      await ctx.reply("❌ Ошибка. Попробуйте позже.").catch(() => {});
+    }
   });
 
   bot.hears("Доход", async (ctx) => {
-    const tgUser = ctx.from;
-    if (!tgUser) return;
-    const { getDb } = await import("@/db/client");
-    const { users } = await import("@/db/schema");
-    const { eq } = await import("drizzle-orm");
-    const db = getDb();
-    const user = await db
-      .select({ role: users.role })
-      .from(users)
-      .where(eq(users.tgUserId, BigInt(tgUser.id)))
-      .limit(1)
-      .then((r) => r[0] ?? null);
-    if (user?.role !== "creator") return;
-    await handleEarnings(ctx);
+    try {
+      const tgUser = ctx.from;
+      if (!tgUser) return;
+      const db = getDb();
+      const user = await db
+        .select({ role: users.role })
+        .from(users)
+        .where(eq(users.tgUserId, BigInt(tgUser.id)))
+        .limit(1)
+        .then((r) => r[0] ?? null);
+      if (user?.role !== "creator") return;
+      await handleEarnings(ctx);
+    } catch (e) {
+      console.error("Доход error:", e);
+      await ctx.reply("❌ Ошибка. Попробуйте позже.").catch(() => {});
+    }
   });
 
   bot.hears("Купить доступ", handleBuy);
