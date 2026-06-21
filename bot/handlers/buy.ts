@@ -7,8 +7,6 @@ import { settleByTxId } from "@/lib/settle";
 import { grantChannelAccess } from "@/bot/services/grant";
 import { cooldown } from "@/lib/kv";
 import { getEnv } from "@/lib/env";
-import { formatGrantMessage } from "@/bot/services/grant";
-import { getBot } from "@/bot/bot";
 import { accrueCommissions } from "@/lib/commissions";
 
 const INVOICE_COOLDOWN_S = 30;
@@ -261,16 +259,8 @@ export async function handleTxid(ctx: Context): Promise<void> {
       case "paid":
         await ctx.reply("✅ Платёж подтверждён! Ссылка-приглашение уже в пути.");
 
-        // Send invite link
+        // Grant access + send invite (grantChannelAccess handles the invite link and message)
         if (result.userId && result.planName) {
-          const bot = getBot();
-          const channelId = getEnv().DEFAULT_CHANNEL_ID;
-          const invite = await bot.api.createChatInviteLink(Number(channelId), {
-            member_limit: 1,
-            expire_date: Math.floor(Date.now() / 1000) + 3600,
-          });
-
-          // Grant access
           await grantChannelAccess({
             userId: result.userId,
             planName: result.planName,
@@ -280,18 +270,6 @@ export async function handleTxid(ctx: Context): Promise<void> {
           await accrueCommissions(result.invoiceId).catch((err) =>
             console.error("commissions:", err),
           );
-
-          await bot.api.sendMessage(
-            Number(tgUser.id),
-            formatGrantMessage({ inviteLink: invite.invite_link, planName: result.planName }),
-            { parse_mode: "Markdown" },
-          ).catch(async (err) => {
-            console.error("invite DM failed:", err.message);
-            await bot.api.sendMessage(
-              Number(tgUser.id),
-              formatGrantMessage({ inviteLink: invite.invite_link, planName: result.planName }).replace(/\*/g, ""),
-            );
-          });
         }
         break;
 
