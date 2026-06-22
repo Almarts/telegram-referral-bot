@@ -135,6 +135,7 @@ export async function accrueCommissions(invoiceId: string): Promise<void> {
     l1Amount = computeCommissionAmount(invoice.amountUsdt, l1Bps);
   }
 
+  const farFuture = new Date(Date.now() + 365 * 10 * 24 * 3600 * 1000);
   const l1Inserted = await insertLedgerIdempotent({
     invoiceId: invoice.id,
     beneficiaryId: l1.id,
@@ -142,6 +143,7 @@ export async function accrueCommissions(invoiceId: string): Promise<void> {
     basisUsdt: invoice.amountUsdt,
     rateBps: l1Bps,
     amountUsdt: l1Amount,
+    unlockAt: farFuture,
     status: "accrued",
   });
   if (!l1Inserted) return;
@@ -166,6 +168,7 @@ export async function accrueCommissions(invoiceId: string): Promise<void> {
         basisUsdt: invoice.amountUsdt,
         rateBps: config.l2Bps,
         amountUsdt: l2Amount,
+        unlockAt: farFuture,
         status: "accrued",
       });
     }

@@ -138,6 +138,7 @@ export const commissionLedger = pgTable(
     basisUsdt: numeric("basis_usdt", { precision: 18, scale: 6 }).notNull(),
     rateBps: integer("rate_bps").notNull(),
     amountUsdt: numeric("amount_usdt", { precision: 18, scale: 6 }).notNull(),
+    unlockAt: timestamp("unlock_at", { withTimezone: true }),
     status: commissionStatusEnum("status").notNull().default("accrued"),
   },
   (table) => [
