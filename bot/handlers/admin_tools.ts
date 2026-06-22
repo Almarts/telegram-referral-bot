@@ -42,7 +42,11 @@ export async function handleMakeCreator(ctx: Context): Promise<void> {
     return;
   }
 
-  const targetTgId = parts[1];
+  const rawTarget = parts[1];
+  const isNumeric = /^\d+$/.test(rawTarget);
+  // If it looks like @username or a plain username (not a numeric tg_id)
+  const targetUsername = rawTarget.replace(/^@/, "");
+
   const parentRefCode = parts.length >= 3 ? parts[2].toUpperCase() : undefined;
   const vipBpsArg = parts.length >= 4 ? parseInt(parts[3], 10) : undefined;
 
@@ -54,21 +58,34 @@ export async function handleMakeCreator(ctx: Context): Promise<void> {
   const db = getDb();
 
   try {
-    // Find target user by tg_id
-    const target = await db
-      .select()
-      .from(users)
-      .where(eq(users.tgUserId, BigInt(targetTgId)))
-      .limit(1)
-      .then((r) => r[0] ?? null);
+    // Find target user — by tg_id (numeric) or by tg_username
+    let target;
+    if (isNumeric) {
+      target = await db
+        .select()
+        .from(users)
+        .where(eq(users.tgUserId, BigInt(rawTarget)))
+        .limit(1)
+        .then((r) => r[0] ?? null);
+    } else {
+      target = await db
+        .select()
+        .from(users)
+        .where(eq(users.tgUsername, targetUsername))
+        .limit(1)
+        .then((r) => r[0] ?? null);
+    }
 
     if (!target) {
-      await ctx.reply(`❌ Пользователь с tg_id \`${targetTgId}\` не найден. Сначала /start.`, { parse_mode: "Markdown" });
+      await ctx.reply(
+        `❌ Пользователь \`${rawTarget}\` не найден. Сначала /start.`,
+        { parse_mode: "Markdown" },
+      );
       return;
     }
 
     if (target.role === "creator") {
-      await ctx.reply(`ℹ️ @${target.tgUsername ?? targetTgId} уже создатель.`);
+      await ctx.reply(`ℹ️ @${target.tgUsername ?? rawTarget} уже создатель.`);
       return;
     }
 
@@ -108,7 +125,7 @@ export async function handleMakeCreator(ctx: Context): Promise<void> {
       .set(updateData)
       .where(eq(users.id, target.id));
 
-    const name = target.tgUsername ? `@${target.tgUsername}` : `id:${targetTgId}`;
+    const name = target.tgUsername ? `@${target.tgUsername}` : `id:${rawTarget}`;
     const vipNote = vipBpsArg !== undefined ? ` (VIP, ${(vipBpsArg / 100).toFixed(0)}%)` : "";
     const parentNote = parentRefCode ? `, parent: \`${parentRefCode}\`` : "";
 
