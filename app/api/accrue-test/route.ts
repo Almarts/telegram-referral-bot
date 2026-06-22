@@ -11,15 +11,15 @@ export async function GET(): Promise<Response> {
   const log = (m: string) => { console.log("ACCRUE_DEBUG:", m); logs.push(m); };
 
   try {
-    // Try direct INSERT via raw pool.query
-    log("Attempting raw pool.query...");
+    // Try direct INSERT via raw pool.query with unlock_at
+    log("Attempting raw pool.query with unlock_at...");
     try {
       const result = await pool.query(`
-        INSERT INTO commission_ledger (invoice_id, beneficiary_id, level, basis_usdt, rate_bps, amount_usdt, status)
+        INSERT INTO commission_ledger (invoice_id, beneficiary_id, level, basis_usdt, rate_bps, amount_usdt, unlock_at, status)
         VALUES (
           'cf3a3927-9733-46e2-a49c-741935bc66a6',
           '3dc898a6-6e7b-4992-b8bb-4bbc0308dae9',
-          1, '10.000000', 5000, '5.000000', 'accrued'
+          1, '10.000000', 5000, '5.000000', NOW() + INTERVAL '10 years', 'accrued'
         )
         ON CONFLICT (invoice_id, beneficiary_id, level) DO NOTHING
         RETURNING id
