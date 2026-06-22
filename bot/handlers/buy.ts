@@ -268,10 +268,13 @@ export async function handleTxid(ctx: Context): Promise<void> {
 
           // Accrue commissions
           console.log("handleTxid: calling accrueCommissions for", result.invoiceId);
-          await accrueCommissions(result.invoiceId).catch((err) =>
-            console.error("commissions error:", err?.message ?? err),
-          );
-          console.log("handleTxid: accrueCommissions done");
+          try {
+            await accrueCommissions(result.invoiceId);
+            console.log("handleTxid: accrueCommissions done OK");
+          } catch (err) {
+            console.error("commissions CAUGHT:", err);
+            console.error("commissions CAUGHT json:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
+          }
         }
         break;
 
