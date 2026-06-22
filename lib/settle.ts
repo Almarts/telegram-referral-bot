@@ -198,23 +198,7 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
     return { status: "duplicate_txid", invoiceId };
   }
 
-  // 3. Check if user already has an active subscription (also indicates previous payment)
-  const existingActiveSub = await db
-    .select({ id: subscriptions.id })
-    .from(subscriptions)
-    .where(
-      and(
-        eq(subscriptions.userId, invoice.userId),
-        eq(subscriptions.status, "active"),
-        gt(subscriptions.endsAt, new Date()),
-      ),
-    )
-    .limit(1)
-    .then((r) => r[0] ?? null);
-
-  if (existingActiveSub) {
-    return { status: "duplicate_txid", invoiceId };
-  }
+  // 3. Removed: check for existing active sub — handled in settlement step 9 below (renew)
 
   // 4. Check TXID on blockchain with detailed diagnostics
   const check = await checkTxidDirect(txId, coldAddress, invoice.createdAt);
