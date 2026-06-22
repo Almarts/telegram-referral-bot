@@ -1,6 +1,6 @@
 import { getDb } from "@/db/client";
-import { invoices, users, commissionLedger } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { invoices, users, commissionLedger, subscriptions } from "@/db/schema";
+import { eq, sql, and, gt } from "drizzle-orm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,6 +74,24 @@ export async function GET(): Promise<Response> {
       .from(commissionLedger)
       .where(eq(commissionLedger.invoiceId, invoice.id));
     log(`Existing commissions for this invoice: ${existing[0]?.count ?? 0}`);
+
+    // Check if TXID 789477d6... already exists somewhere
+    const txCheck = await db
+      .select({ id: invoices.id, userId: invoices.userId, status: invoices.status })
+      .from(invoices)
+      .where(eq(invoices.paidTxHash, "789477d6bbd219ccd94d9f47f6a0e85565807795ecb34e95fe6bf22237a7dca3"))
+      .limit(1)
+      .then((r) => r[0] ?? null);
+    log(`TX789477 DB check: ${txCheck ? `inv=${txCheck.id?.slice?.(0,8)} user=${txCheck.userId?.slice?.(0,8)} status=${txCheck.status}` : "NOT_FOUND"}`);
+
+    // Check if chilli (e8cd7ec1) has active sub
+    const chilliSub = await db
+      .select({ id: subscriptions.id, status: subscriptions.status })
+      .from(subscriptions)
+      .where(and(eq(subscriptions.userId, invoice.userId), eq(subscriptions.status, "active"), gt(subscriptions.endsAt, new Date())))
+      .limit(1)
+      .then((r) => r[0] ?? null);
+    log(`CHILLI has active sub: ${chilliSub ? `sub=${chilliSub.id?.slice?.(0,8)} status=${chilliSub.status}` : "NO"}`);
 
   } catch (err: any) {
     const msg = err instanceof Error ? `${err.name}: ${err.message}\n${err.stack}` : String(err);
