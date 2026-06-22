@@ -6,6 +6,7 @@ import { handleMyReferrals } from "./handlers/my_referrals";
 import { handleEarnings } from "./handlers/earnings";
 import { handleDashboard } from "./handlers/admin_dashboard";
 import { handleCommissions, handleCommissionsCallback } from "./handlers/commissions";
+import { handleMakeCreator, handleInvite } from "./handlers/admin_tools";
 import { onboardUser } from "./services/onboarding";
 import { getEnv } from "@/lib/env";
 import { getDb } from "@/db/client";
@@ -105,6 +106,24 @@ export function createBot(token: string): Bot<Context> {
     const adminIds = getEnv().ADMIN_TG_IDS;
     if (!adminIds.includes(BigInt(tgUser.id))) return;
     await handleCommissions(ctx);
+  });
+
+  // Admin: make a user a creator
+  bot.command("makecreator", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    await handleMakeCreator(ctx);
+  });
+
+  // Admin: generate one-time invite link
+  bot.command("invite", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    await handleInvite(ctx);
   });
 
   // Handle TXID — user pastes transaction hash after payment
