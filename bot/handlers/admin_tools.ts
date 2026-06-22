@@ -4,6 +4,7 @@ import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getBot } from "@/bot/bot";
 import { getEnv } from "@/lib/env";
+import { creatorKeyboard } from "./start";
 
 /**
  * /makecreator tg_id [parent_ref_code] [vip_bps]
@@ -155,6 +156,13 @@ export async function handleMakeCreator(ctx: Context): Promise<void> {
       await bot.api.sendMessage(
         Number(target.tgUserId),
         `🎉 Ты стал создателем!\n\n🔗 Твоя ссылка на вход в канал:\n${invite.invite_link}\n\nДействительна до первого использования.`,
+      );
+
+      // Send creator keyboard separately
+      await bot.api.sendMessage(
+        Number(target.tgUserId),
+        "Теперь тебе доступны кнопки:",
+        { reply_markup: creatorKeyboard() },
       );
     } catch (inviteErr) {
       console.error("handleMakeCreator: invite failed:", inviteErr);
