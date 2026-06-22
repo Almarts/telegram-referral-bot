@@ -32,6 +32,9 @@ export async function GET(): Promise<Response> {
     } catch (e: any) {
       log(`accrueCommissions THREW: ${e.name}: ${e.message}`);
       log(`Stack: ${(e.stack || "").slice(0, 300)}`);
+      // Get the actual error detail
+      const detail = e.detail || e.hint || e.code || "";
+      log(`Detail: ${detail}`);
     }
 
     // Check if commission was created
