@@ -61,7 +61,7 @@ export async function grantChannelAccess(params: GrantParams): Promise<void> {
 
   try {
     const invite = await bot.api.createChatInviteLink(Number(channelId), {
-      member_limit: 1,
+      member_limit: 0,
     });
 
     const message = formatGrantMessage({
