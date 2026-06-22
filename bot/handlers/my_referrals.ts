@@ -34,6 +34,18 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
       .where(eq(users.parentRefCode, user.refCode))
       .then((r) => r[0]?.count ?? 0);
 
+    // Count L1 creators specifically
+    const l1CreatorCount = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(users)
+      .where(
+        and(
+          eq(users.parentRefCode, user.refCode),
+          eq(users.role, "creator"),
+        ),
+      )
+      .then((r) => r[0]?.count ?? 0);
+
     // Get L1 users' IDs
     const l1Users = await db
       .select({ id: users.id })
@@ -109,6 +121,7 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
 Referral link: ${referralLink}
 
 Direct (L1): ${l1Count} users
+L1 creators: ${l1CreatorCount}
 L1 paid invoices: ${l1Paid}
 Commission: ${commissionPct}%`;
     if (l2Count > 0) {
