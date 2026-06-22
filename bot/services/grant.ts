@@ -46,6 +46,8 @@ async function getTelegramUserId(dbUserId: string): Promise<bigint> {
 
 /**
  * Send a one-shot channel invite link to the user after payment.
+ * Creates a fresh invite link with member_limit=1 (single-use).
+ * If the user was previously kicked, unban them first.
  */
 export async function grantChannelAccess(params: GrantParams): Promise<void> {
   const bot = getBot();
@@ -60,6 +62,17 @@ export async function grantChannelAccess(params: GrantParams): Promise<void> {
   }
 
   try {
+    // If user was previously kicked, unban them so invite link works
+    try {
+      const member = await bot.api.getChatMember(Number(channelId), Number(tgUserId));
+      if (member.status === "kicked") {
+        await bot.api.unbanChatMember(Number(channelId), Number(tgUserId));
+        console.log("grantChannelAccess: unbanned user", tgUserId);
+      }
+    } catch (_) {
+      // getChatMember can fail if user never interacted — ignore
+    }
+
     const invite = await bot.api.createChatInviteLink(Number(channelId), {
       member_limit: 1,
     });
