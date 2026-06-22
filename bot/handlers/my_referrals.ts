@@ -101,7 +101,12 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
     // Commission rate
     const commissionPct = user.role === "creator" && user.vipBps ? user.vipBps / 100 : 10;
 
+    const botUsername = "WhaleReferral_bot";
+    const referralLink = `https://t.me/${botUsername}?start=${user.refCode}`;
+
     let msg = `My referrals
+
+Referral link: ${referralLink}
 
 Direct (L1): ${l1Count} users
 L1 paid invoices: ${l1Paid}
