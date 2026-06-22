@@ -87,11 +87,14 @@ export async function GET() {
         tgUsername: users.tgUsername,
         tgUserId: users.tgUserId,
         createdAt: users.createdAt,
+        role: users.role,
+        refCode: users.refCode,
+        parentRefCode: users.parentRefCode,
       })
       .from(users)
       .orderBy(desc(users.createdAt))
       .limit(5);
-    results.push(`users.latest5=${r.length}`);
+    results.push(`users.latest5=${JSON.stringify(r.map(u => ({tg: u.tgUsername, role: u.role, ref: u.refCode, parent: u.parentRefCode})))}`);
   } catch (e: any) {
     results.push(`users.latest5.ERR: ${e.message}`);
   }
