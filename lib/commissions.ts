@@ -22,6 +22,8 @@ async function insertLedgerIdempotent(row: LedgerRow): Promise<boolean> {
     return true;
   } catch (err: unknown) {
     if (isUniqueViolation(err)) return false;
+    // Log the full error for debugging
+    console.error("insertLedgerIdempotent FAIL:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
     throw err;
   }
 }
