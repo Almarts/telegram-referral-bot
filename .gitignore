@@ -54,3 +54,5 @@ sweep-env.json
 git_token.txt
 gh_token.txt
 gh_check.py
+pat-token.txt
+update_gh_secret.py

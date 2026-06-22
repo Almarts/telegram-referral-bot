@@ -134,6 +134,31 @@ export async function handleMakeCreator(ctx: Context): Promise<void> {
       `Реф-код: \`${target.refCode}\``,
       { parse_mode: "Markdown" },
     );
+
+    // Send invite link to the new creator
+    try {
+      const bot = getBot();
+      const channelId = getEnv().DEFAULT_CHANNEL_ID;
+
+      // Unban if kicked
+      try {
+        const member = await bot.api.getChatMember(Number(channelId), Number(target.tgUserId));
+        if (member.status === "kicked") {
+          await bot.api.unbanChatMember(Number(channelId), Number(target.tgUserId));
+        }
+      } catch (_) {}
+
+      const invite = await bot.api.createChatInviteLink(Number(channelId), {
+        member_limit: 1,
+      });
+
+      await bot.api.sendMessage(
+        Number(target.tgUserId),
+        `🎉 Ты стал создателем!\n\n🔗 Твоя ссылка на вход в канал:\n${invite.invite_link}\n\nДействительна до первого использования.`,
+      );
+    } catch (inviteErr) {
+      console.error("handleMakeCreator: invite failed:", inviteErr);
+    }
   } catch (err) {
     console.error("handleMakeCreator:", err);
     await ctx.reply("❌ Ошибка. Проверьте логи.");
