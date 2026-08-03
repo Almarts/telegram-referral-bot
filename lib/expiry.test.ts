@@ -16,11 +16,11 @@ function sub(overrides: Partial<SubWithUser> = {}): SubWithUser {
 describe("computeNudges", () => {
   const now = new Date("2026-05-29T00:00:00Z");
 
-  it("returns T-72h nudge when ends_at is exactly 72h from now", () => {
-    const s = sub({ endsAt: new Date("2026-06-01T00:00:00Z") }); // 72h from now
+  it("returns T-7d nudge when ends_at is exactly 7 days from now", () => {
+    const s = sub({ endsAt: new Date("2026-06-05T00:00:00Z") }); // 7d from now
     const result = computeNudges([s], new Set(), now);
     expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ subId: "sub-1", window: "72h" });
+    expect(result[0]).toMatchObject({ subId: "sub-1", window: "7d" });
   });
 
   it("returns T-24h nudge when ends_at is 24h from now", () => {
@@ -28,13 +28,6 @@ describe("computeNudges", () => {
     const result = computeNudges([s], new Set(), now);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ subId: "sub-1", window: "24h" });
-  });
-
-  it("returns T-1h nudge when ends_at is 1h from now", () => {
-    const s = sub({ endsAt: new Date("2026-05-29T01:00:00Z") }); // 1h from now
-    const result = computeNudges([s], new Set(), now);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ subId: "sub-1", window: "1h" });
   });
 
   it("returns no nudge when ends_at is far away", () => {
@@ -50,15 +43,15 @@ describe("computeNudges", () => {
   });
 
   it("skips already-sent nudge (idempotency)", () => {
-    const s = sub({ endsAt: new Date("2026-06-01T00:00:00Z") }); // 72h
-    const result = computeNudges([s], new Set(["sub-1:72h"]), now);
+    const s = sub({ endsAt: new Date("2026-06-05T00:00:00Z") }); // 7d
+    const result = computeNudges([s], new Set(["sub-1:7d"]), now);
     expect(result).toHaveLength(0);
   });
 
   it("returns single nudge even when sub falls in two windows", () => {
-    // If a sub is at exactly T-24h but T-72h was already sent, only T-24h returns
+    // If a sub is at exactly T-24h but T-7d was already sent, only T-24h returns
     const s = sub({ endsAt: new Date("2026-05-30T00:00:00Z") }); // 24h
-    const alreadySent = new Set(["sub-1:72h"]);
+    const alreadySent = new Set(["sub-1:7d"]);
     const result = computeNudges([s], alreadySent, now);
     expect(result).toHaveLength(1);
     expect(result[0].window).toBe("24h");
@@ -66,12 +59,12 @@ describe("computeNudges", () => {
 
   it("processes multiple subs independently", () => {
     const subs = [
-      sub({ subId: "sub-1", endsAt: new Date("2026-06-01T00:00:00Z") }),
+      sub({ subId: "sub-1", endsAt: new Date("2026-06-05T00:00:00Z") }),
       sub({ subId: "sub-2", endsAt: new Date("2026-05-30T00:00:00Z") }),
     ];
     const result = computeNudges(subs, new Set(), now);
     expect(result).toHaveLength(2);
-    expect(result.map((r) => r.window).sort()).toEqual(["24h", "72h"]);
+    expect(result.map((r) => r.window).sort()).toEqual(["24h", "7d"]);
   });
 });
 

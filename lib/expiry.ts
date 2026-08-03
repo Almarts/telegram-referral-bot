@@ -21,11 +21,10 @@ export interface NudgeResult {
 }
 
 // ── Nudge windows ──────────────────────────────────────────────────────────
-
+// Отправляем напоминания о продлении за 7 дней и за 24 часа до окончания.
 const NUDGE_WINDOWS = [
-  { label: "72h", msBefore: 72 * 60 * 60 * 1000 },
+  { label: "7d", msBefore: 7 * 24 * 60 * 60 * 1000 },
   { label: "24h", msBefore: 24 * 60 * 60 * 1000 },
-  { label: "1h", msBefore: 1 * 60 * 60 * 1000 },
 ] as const;
 
 const TICK_INTERVAL_MS = 60_000; // cron runs every 60s
@@ -83,42 +82,37 @@ export function computeExpiries(subs: SubWithUser[], now: Date): SubWithUser[] {
 
 function formatNudgeMessage(window: string, endsAt: Date): string {
   const endsStr = endsAt.toISOString().replace("T", " ").slice(0, 16);
-  if (window === "72h") {
+  const renewLine =
+    "Продлите сейчас, чтобы сохранить доступ: нажмите /buy и выберите тариф.";
+  if (window === "7d") {
     return [
-      "Your subscription expires in 3 days.",
-      `Expires: ${endsStr} UTC`,
+      "⏳ Через неделю заканчивается ваша подписка.",
+      `Действует до: ${endsStr} UTC`,
       "",
-      "Renew now to keep access: /renew",
+      renewLine,
     ].join("\n");
   }
-  if (window === "24h") {
-    return [
-      "Your subscription expires tomorrow!",
-      `Expires: ${endsStr} UTC`,
-      "",
-      "Renew now to keep access: /renew",
-    ].join("\n");
-  }
+  // window === "24h"
   return [
-    "Your subscription expires in 1 hour!",
-    `Expires: ${endsStr} UTC`,
+    "⏳ Ваша подписка заканчивается уже завтра!",
+    `Действует до: ${endsStr} UTC`,
     "",
-    "Renew now to keep access: /renew",
+    renewLine,
   ].join("\n");
 }
 
 function formatExpiryMessage(): string {
   return [
-    "Your subscription has expired.",
+    "❌ Ваша подписка истекла, доступ к каналу закрыт.",
     "",
-    "Renew now to regain access: /renew",
+    "Чтобы оплатить доступ снова, нажмите /buy и выберите тариф.",
   ].join("\n");
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Scan active subscriptions and send renewal nudges at T-72h, T-24h, T-1h.
+ * Scan active subscriptions and send renewal nudges at T-7d and T-24h.
  *
  * Idempotent via the `nudges_sent` table — each (sub_id, window) pair is
  * recorded and the primary key prevents duplicate sends.
@@ -144,7 +138,7 @@ export async function processNudges(): Promise<number> {
     .where(
       and(
         eq(subscriptions.status, "active"),
-        lte(subscriptions.endsAt, sql`now() + interval '73 hours'`),
+        lte(subscriptions.endsAt, sql`now() + interval '8 days'`),
       ),
     )
     .orderBy(asc(subscriptions.endsAt))
@@ -222,14 +216,13 @@ export async function processExpiries(): Promise<number> {
   let processed = 0;
 
   for (const sub of expired) {
-    // Soft kick: ban then immediately unban
-    // until_date = now + 35s — Telegram auto-unbans after this, so we unban
-    // immediately to let the user rejoin via a fresh invite link
+    // Полная блокировка (без авторазбана): юзер не может войти в канал,
+    // пока при новой оплате grantChannelAccess не разблокирует его обходом
+    // unbanChatMember перед выдачей ссылки-приглашения.
     try {
-      const untilDate = Math.floor(Date.now() / 1000) + 35;
-      await bot.api.banChatMember(Number(sub.channelId), Number(sub.tgUserId), {
-        until_date: untilDate,
-      });
+      // Без until_date Telegram банит навсегда; юзер остаётся заблокированным,
+      // пока не оплатит заново, после чего grant.ts разбанит его.
+      await bot.api.banChatMember(Number(sub.channelId), Number(sub.tgUserId));
     } catch (err: unknown) {
       const msg = String(err);
       // "not enough rights" — bot lost admin, needs manual intervention
@@ -241,13 +234,6 @@ export async function processExpiries(): Promise<number> {
         console.error(`banChatMember failed sub=${sub.subId}:`, msg);
       }
       continue;
-    }
-
-    // Unban is best-effort — the ban already removed access
-    try {
-      await bot.api.unbanChatMember(Number(sub.channelId), Number(sub.tgUserId));
-    } catch {
-      // Non-fatal: the timed ban will auto-expire at until_date
     }
 
     try {
