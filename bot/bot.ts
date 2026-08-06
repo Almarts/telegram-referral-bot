@@ -6,8 +6,13 @@ import { handleMyReferrals } from "./handlers/my_referrals";
 import { handleEarnings } from "./handlers/earnings";
 import { handleDashboard } from "./handlers/admin_dashboard";
 import { handleCommissions, handleCommissionsCallback } from "./handlers/commissions";
-import { handleMakeCreator, handleInvite } from "./handlers/admin_tools";
+import { handleMakeCreator, handleInvite, handleFree } from "./handlers/admin_tools";
 import { onboardUser } from "./services/onboarding";
+import {
+  grantFreeAccess,
+  consumeFreeCode,
+  parseFreePayload,
+} from "./services/freegrant";
 import { getEnv } from "@/lib/env";
 import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
@@ -25,6 +30,34 @@ export function createBot(token: string): Bot<Context> {
         tgLang: tgUser.language_code,
         startPayload: typeof ctx.match === "string" ? ctx.match : undefined,
       });
+
+      // Free-access link flow: /start free_<CODE>
+      const freeCode = parseFreePayload(
+        typeof ctx.match === "string" ? ctx.match : undefined,
+      );
+      if (freeCode) {
+        try {
+          const ok = await consumeFreeCode(freeCode);
+          if (ok) {
+            const db = getDb();
+            const dbUser = await db
+              .select({ id: users.id })
+              .from(users)
+              .where(eq(users.tgUserId, BigInt(tgUser.id)))
+              .limit(1)
+              .then((r) => r[0] ?? null);
+            if (dbUser) {
+              await grantFreeAccess(dbUser.id);
+              await ctx.reply("✅ Твой бесплатный доступ активирован!");
+            }
+          } else {
+            await ctx.reply("❌ Эта ссылка недействительна или уже использована.");
+          }
+        } catch (err) {
+          console.error("free grant flow error:", err);
+          await ctx.reply("❌ Не удалось активировать доступ. Попробуйте позже.");
+        }
+      }
     }
     await handleStart(ctx);
   });
@@ -124,6 +157,15 @@ export function createBot(token: string): Bot<Context> {
     const adminIds = getEnv().ADMIN_TG_IDS;
     if (!adminIds.includes(BigInt(tgUser.id))) return;
     await handleInvite(ctx);
+  });
+
+  // Admin: generate a free 3-month access link for a friend
+  bot.command("free", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    await handleFree(ctx);
   });
 
   // Handle TXID — user pastes transaction hash after payment

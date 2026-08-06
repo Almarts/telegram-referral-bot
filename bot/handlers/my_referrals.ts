@@ -2,6 +2,18 @@ import type { Context } from "grammy";
 import { getDb } from "@/db/client";
 import { users, invoices, commissionLedger } from "@/db/schema";
 import { eq, and, sql } from "drizzle-orm";
+import { getBot } from "@/bot/bot";
+
+/** Fetch the bot's current @username (updates automatically after a rename). */
+async function getBotUsername(): Promise<string> {
+  try {
+    const me = await getBot().api.getMe();
+    if (me.username) return me.username;
+  } catch (_) {
+    /* fall through to fallback */
+  }
+  return "WhaleReferral_bot";
+}
 
 export async function handleMyReferrals(ctx: Context): Promise<void> {
   const tgUser = ctx.from;
@@ -113,7 +125,7 @@ export async function handleMyReferrals(ctx: Context): Promise<void> {
     // Commission rate
     const commissionPct = user.role === "creator" && user.vipBps ? user.vipBps / 100 : 10;
 
-    const botUsername = "WhaleReferral_bot";
+    const botUsername = (await getBotUsername());
     const referralLink = `https://t.me/${botUsername}?start=${user.refCode}`;
 
     let msg = `My referrals

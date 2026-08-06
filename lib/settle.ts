@@ -3,32 +3,7 @@ import { invoices, subscriptions, subscriptionPlans } from "@/db/schema";
 import { eq, and, gt, desc } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import { isUniqueViolation } from "@/lib/db-errors";
-import { createHash } from "node:crypto";
-
-const TRONGRID = "https://api.trongrid.io";
-const ONE_TRX_SUN = 10_000_000n;
-
-// Base58 alphabet for Tron address decoding
-const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-function hexToBase58(hex: string): string {
-  let h = hex;
-  if (h.startsWith("0x")) h = h.slice(2);
-  if (!h.startsWith("41")) h = "41" + h;
-  const buf = Buffer.from(h, "hex");
-  const full = Buffer.concat([buf, createHash("sha256").update(createHash("sha256").update(buf).digest()).digest().slice(0, 4)]);
-  let num = BigInt("0x" + full.toString("hex"));
-  let result = "";
-  while (num > 0n) {
-    result = B58[Number(num % 58n)] + result;
-    num /= 58n;
-  }
-  for (const b of buf) {
-    if (b === 0) result = B58[0] + result;
-    else break;
-  }
-  return result;
-}
+import { gte } from "@/lib/money";
 
 export type SettleStatus =
   | "paid"              // ✅ всё ок, доступ можно дать
@@ -58,113 +33,75 @@ export function computeRenewalStart(now: Date, activeSubEndsAt?: Date): Date {
 }
 
 /**
- * Verify a TRX transaction by TXID and settle the invoice.
- * User sends TRX to the cold wallet and provides the TXID.
- */
-/**
- * Check a TXID on TronGrid directly and diagnose why it fails.
- * Returns a detailed failure reason, or the parsed tx info if successful.
+ * Check a TXID on TronGrid — verify a USDT TRC20 transfer to the cold wallet
+ * and confirm it meets the invoice amount. Returns a detailed failure reason,
+ * or the parsed tx info if successful.
  */
 async function checkTxidDirect(
   txId: string,
   coldAddress: string,
   invoiceCreatedAt: Date,
+  expectedAmountUsdt: string,
 ): Promise<
-  | { ok: true; from: string; to: string; amountSun: bigint; blockTimestamp: number }
+  | { ok: true; from: string; to: string; amountUsdt: string; blockTimestamp: number }
   | { ok: false; reason: "not_found" | "wrong_address" | "underpaid" | "too_old"; detail?: string }
 > {
-  const apiKey = getEnv().TRONGRID_API_KEY;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (apiKey) headers["TRON-PRO-API-KEY"] = apiKey;
-
   try {
-    // Step 1: Check tx exists on chain
-    const txRes = await fetch("https://api.trongrid.io/wallet/gettransactionbyid", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ value: txId }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const tx = await txRes.json() as Record<string, unknown>;
-    if (!tx || !tx.txID) {
-      return { ok: false, reason: "not_found", detail: "TXID not found on chain" };
+    const { getTron } = await import("./tron");
+    const verifyResult = await getTron().verifyUsdtTransfer(txId, coldAddress);
+
+    if (!verifyResult) {
+      return { ok: false, reason: "not_found", detail: "USDT TRC20 transfer not found or not confirmed" };
     }
 
-    // Step 2: Check it's confirmed
-    const infoRes = await fetch("https://api.trongrid.io/wallet/gettransactioninfobyid", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ value: txId }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const txInfo = await infoRes.json() as Record<string, unknown>;
-    if (!txInfo || !txInfo.blockNumber) {
-      return { ok: false, reason: "not_found", detail: "Transaction not confirmed" };
-    }
+    // Recipient is verified inside verifyUsdtTransfer (returns null if not to cold wallet).
 
-    const rawData = tx.raw_data as Record<string, unknown> | undefined;
-    const contracts = rawData?.contract as Array<Record<string, unknown>> | undefined;
-    if (!contracts?.length) {
-      return { ok: false, reason: "not_found", detail: "No contracts in tx" };
-    }
-
-    const value = contracts[0]?.parameter?.value as Record<string, unknown> | undefined;
-    if (!value) {
-      return { ok: false, reason: "not_found", detail: "No value in contract" };
-    }
-
-    const toHex = String(value.to_address ?? "");
-    const amountSun = BigInt(String(value.amount ?? "0"));
-    const blockTimestamp = Number(txInfo.blockTimeStamp ?? 0) / 1000;
-
-    // Decode address
-    const { getTronWeb } = await import("./tron/tronweb-client");
-    const tw = getTronWeb(apiKey);
-    let toAddr: string;
-    try {
-      toAddr = tw.address.fromHex(toHex);
-    } catch {
-      toAddr = toHex;
-    }
-
-    // Check recipient
-    if (toAddr !== coldAddress) {
-      return {
-        ok: false,
-        reason: "wrong_address",
-        detail: `Sent to ${toAddr}, expected ${coldAddress}`,
-      };
-    }
-
-    // Check amount
-    if (amountSun < 10_000_000n) {
+    // Amount check — full invoice amount required
+    if (!gte(verifyResult.amountUsdt, expectedAmountUsdt)) {
       return {
         ok: false,
         reason: "underpaid",
-        detail: `Received ${Number(amountSun) / 1_000_000} TRX, minimum 10 TRX`,
+        detail: `Received ${verifyResult.amountUsdt} USDT, required ${expectedAmountUsdt} USDT`,
       };
     }
 
-    // Check timestamp
-    const invoiceTs = Math.floor(invoiceCreatedAt.getTime() / 1000);
-    if (blockTimestamp && blockTimestamp < invoiceTs) {
-      return {
-        ok: false,
-        reason: "too_old",
-        detail: `TX from ${new Date(blockTimestamp * 1000).toISOString()}, invoice created ${invoiceCreatedAt.toISOString()}`,
-      };
-    }
-
-    let fromAddr: string;
+    // Too-old check: attempt to read the block timestamp for the tx.
+    // USDT verify doesn't return it directly, so only apply a loose guard.
+    // (Invoice amounts now vary per plan; most users pay right after creating the invoice.)
+    let blockTimestamp = 0;
     try {
-      fromAddr = tw.address.fromHex(String(tx.owner_address ?? tx.ownerAddress ?? ""));
+      const apiKey = getEnv().TRONGRID_API_KEY;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers["TRON-PRO-API-KEY"] = apiKey;
+      const infoRes = await fetch("https://api.trongrid.io/wallet/gettransactioninfobyid", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ value: txId }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const txInfo = await infoRes.json() as { blockTimeStamp?: number };
+      if (txInfo.blockTimeStamp) {
+        blockTimestamp = Number(txInfo.blockTimeStamp) / 1000;
+        const invoiceTs = Math.floor(invoiceCreatedAt.getTime() / 1000);
+        if (blockTimestamp < invoiceTs) {
+          return {
+            ok: false,
+            reason: "too_old",
+            detail: `TX from ${new Date(blockTimestamp * 1000).toISOString()}, invoice created ${invoiceCreatedAt.toISOString()}`,
+          };
+        }
+      }
     } catch {
-      fromAddr = String(tx.owner_address ?? tx.ownerAddress ?? "");
+      // Timestamp fetch failed — allow through (secondary check, best-effort)
     }
 
-    return { ok: true, from: fromAddr, to: toAddr, amountSun, blockTimestamp };
+    return {
+      ok: true,
+      from: verifyResult.from,
+      to: verifyResult.to,
+      amountUsdt: verifyResult.amountUsdt,
+      blockTimestamp,
+    };
   } catch (err) {
     return { ok: false, reason: "not_found", detail: `TronGrid error: ${err}` };
   }
@@ -201,7 +138,7 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
   // 3. Removed: check for existing active sub — handled in settlement step 9 below (renew)
 
   // 4. Check TXID on blockchain with detailed diagnostics
-  const check = await checkTxidDirect(txId, coldAddress, invoice.createdAt);
+  const check = await checkTxidDirect(txId, coldAddress, invoice.createdAt, invoice.amountUsdt);
 
   if (!check.ok) {
     return {

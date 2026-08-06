@@ -60,6 +60,20 @@ export async function handleBuy(ctx: Context): Promise<void> {
     return;
   }
 
+  // Show a plan selector when there are multiple active plans
+  if (plans.length > 1) {
+    const rows = plans.map((p) => [
+      {
+        text: `${p.name} — ${p.priceUsdt} ${p.currency}`,
+        callback_data: `buy:${p.id}`,
+      },
+    ]);
+    await ctx.reply("Выбери тариф:", {
+      reply_markup: { inline_keyboard: rows },
+    });
+    return;
+  }
+
   // Use the first (only) active plan
   const plan = plans[0];
 
@@ -279,7 +293,7 @@ export async function handleTxid(ctx: Context): Promise<void> {
         break;
 
       case "underpaid":
-        await ctx.reply("⚠️ Мы нашли транзакцию, но сумма меньше требуемой (10 TRX). Пожалуйста, отправьте полную сумму.");
+        await ctx.reply("⚠️ Мы нашли транзакцию, но сумма меньше требуемой. Пожалуйста, отправьте полную сумму.");
         break;
 
       case "not_found":
@@ -287,7 +301,7 @@ export async function handleTxid(ctx: Context): Promise<void> {
         break;
 
       case "wrong_address":
-        await ctx.reply("❌ Транзакция отправлена не на тот адрес. Убедитесь, что отправляете TRX на указанный кошелёк.");
+        await ctx.reply("❌ Транзакция отправлена не на тот адрес. Убедитесь, что отправляете USDT на указанный кошелёк.");
         break;
 
       case "too_old":

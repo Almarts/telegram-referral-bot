@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { getBot } from "@/bot/bot";
 import { getEnv } from "@/lib/env";
 import { creatorKeyboard } from "./start";
+import { createFreeCode, FREE_DAYS } from "@/bot/services/freegrant";
 
 /**
  * /makecreator tg_id [parent_ref_code] [vip_bps]
@@ -201,6 +202,36 @@ export async function handleInvite(ctx: Context): Promise<void> {
     );
   } catch (err) {
     console.error("handleInvite:", err);
+    await ctx.reply("❌ Ошибка создания ссылки. Проверьте логи.");
+  }
+}
+
+/**
+ * /free — generate a one-time link that grants a friend FREE access for 3 months.
+ */
+export async function handleFree(ctx: Context): Promise<void> {
+  const tgUser = ctx.from;
+  if (!tgUser) return;
+
+  // Admin-only check
+  const adminIds = getEnv().ADMIN_TG_IDS;
+  if (!adminIds.includes(BigInt(tgUser.id))) return;
+
+  try {
+    const code = await createFreeCode();
+    const bot = getBot();
+    const me = await bot.api.getMe();
+    const username = me.username ?? "WhaleReferral_bot";
+    const link = `https://t.me/${username}?start=free_${code}`;
+
+    await ctx.reply(
+      `🎁 Ссылка бесплатного доступа на ${FREE_DAYS} дней:\n` +
+      `${link}\n\n` +
+      `Одноразовая — сработает при первом переходе. Срок действия — 7 дней.`,
+      { disable_web_page_preview: true },
+    );
+  } catch (err) {
+    console.error("handleFree:", err);
     await ctx.reply("❌ Ошибка создания ссылки. Проверьте логи.");
   }
 }

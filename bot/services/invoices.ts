@@ -26,6 +26,7 @@ export interface Plan {
   name: string;
   durationDays: number;
   priceUsdt: string;
+  currency: string;
   active: boolean;
 }
 
