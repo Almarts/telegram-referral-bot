@@ -52,7 +52,7 @@ export async function handleEarnings(ctx: Context): Promise<void> {
 
     await ctx.reply(`Earnings
 
-Available: ${fmt} TRX`);
+Available: ${fmt} USDT`);
   } catch (e) {
     await ctx.reply("Error loading earnings. Try again later.");
   }

@@ -82,8 +82,8 @@ export async function handleDashboard(ctx: Context): Promise<void> {
     "🏠 *Dashboard*",
     "",
     `👥 Users: *${totalUsers}* | ✅ Active: *${activeSubs}* | ❌ Expired: *${expiredSubs}*`,
-    `📦 Paid today: *${paidToday}* | Total rev: *${totalRevenue} TRX*`,
-    `💰 Accrued commissions: *${totalCommissionAccrued} TRX*`,
+    `📦 Paid today: *${paidToday}* | Total rev: *${totalRevenue} USDT*`,
+    `💰 Accrued commissions: *${totalCommissionAccrued} USDT*`,
     "",
     "*Latest paid:*",
     ...latestUsers.map(
@@ -187,7 +187,7 @@ async function handleAllUsers(ctx: Context, onlyPaid: boolean = false): Promise<
       const lastPaid = r.lastPaidAt
         ? new Date(r.lastPaidAt).toISOString().slice(0, 10)
         : "—";
-      return `${i + 1}. ${role} ${name} | paid: *${r.totalPaid} TRX* (${r.paidCount}x) | last: ${lastPaid}`;
+      return `${i + 1}. ${role} ${name} | paid: *${r.totalPaid} USDT* (${r.paidCount}x) | last: ${lastPaid}`;
     }),
   ];
 

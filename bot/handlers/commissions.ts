@@ -34,17 +34,17 @@ export async function handleCommissions(ctx: Context): Promise<void> {
     "",
     ...rows.map((r, i) => {
       const name = r.tgUsername ? `@${r.tgUsername}` : `id:${r.tgUserId}`;
-      return `${i + 1}. ${name} — ${r.total} TRX (${r.count} refs)`;
+      return `${i + 1}. ${name} — ${r.total} USDT (${r.count} refs)`;
     }),
     "",
-    "Total: " + rows.reduce((s, r) => s + parseFloat(r.total), 0).toFixed(6) + " TRX",
+    "Total: " + rows.reduce((s, r) => s + parseFloat(r.total), 0).toFixed(6) + " USDT",
   ];
 
   await ctx.reply(lines.join("\n"), {
     reply_markup: {
       inline_keyboard: rows.map((r) => [
         {
-          text: `VYPLACHENO @${r.tgUsername} — ${r.total} TRX`,
+          text: `VYPLACHENO @${r.tgUsername} — ${r.total} USDT`,
           callback_data: `comm:pay:${r.beneficiaryId}`,
         },
       ]),

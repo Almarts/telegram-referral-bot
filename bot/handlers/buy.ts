@@ -11,6 +11,14 @@ import { accrueCommissions } from "@/lib/commissions";
 
 const INVOICE_COOLDOWN_S = 30;
 
+/** Trim trailing zeros from a 6dp USDT string, e.g. "120.000000" → "120". */
+function fmtUsdt(value: string): string {
+  return value.replace(/\.0+$/, "");
+}
+
+/** Full currency label for payments — USDT on TRON (TRC20). */
+const USDT_TRC20 = "USDT (TRC20)";
+
 async function isBuyDisabled(): Promise<boolean> {
   const db = getDb();
   const ks = await db
@@ -64,11 +72,11 @@ export async function handleBuy(ctx: Context): Promise<void> {
   if (plans.length > 1) {
     const rows = plans.map((p) => [
       {
-        text: `${p.name} — ${p.priceUsdt} ${p.currency}`,
+        text: `${p.name} — ${fmtUsdt(p.priceUsdt)} ${p.currency}`,
         callback_data: `buy:${p.id}`,
       },
     ]);
-    await ctx.reply("Выбери тариф:", {
+    await ctx.reply("Выбери тариф (оплата в USDT TRC20):", {
       reply_markup: { inline_keyboard: rows },
     });
     return;
@@ -111,9 +119,9 @@ export async function handleBuy(ctx: Context): Promise<void> {
       `📋 *Счёт на оплату*`,
       ``,
       `📌 Тариф: *${invoice.planName}*`,
-      `💵 Сумма: *${invoice.amountUsdt} ${invoice.currency}*`,
+      `💵 Сумма: *${fmtUsdt(invoice.amountUsdt)} ${USDT_TRC20}*`,
       ``,
-      `Отправьте ровно *${invoice.amountUsdt} ${invoice.currency}* на кошелёк:`,
+      `Отправьте ровно *${fmtUsdt(invoice.amountUsdt)} ${USDT_TRC20}* на кошелёк (TRC20):`,
       `\`${coldAddress}\``,
       ``,
       `⏳ Действителен до: ${expiryStr}`,
@@ -199,9 +207,9 @@ export async function handleBuyCallback(ctx: Context): Promise<void> {
       `📋 *Счёт на оплату*`,
       ``,
       `📌 Тариф: *${invoice.planName}*`,
-      `💵 Сумма: *${invoice.amountUsdt} ${invoice.currency}*`,
+      `💵 Сумма: *${fmtUsdt(invoice.amountUsdt)} ${USDT_TRC20}*`,
       ``,
-      `Отправьте ровно *${invoice.amountUsdt} ${invoice.currency}* на кошелёк:`,
+      `Отправьте ровно *${fmtUsdt(invoice.amountUsdt)} ${USDT_TRC20}* на кошелёк (TRC20):`,
       `\`${coldAddress}\``,
       ``,
       `⏳ Действителен до: ${expiryStr}`,
