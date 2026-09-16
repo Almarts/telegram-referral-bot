@@ -29,8 +29,6 @@ import {
   campaignBotLink,
   recordJoin,
 } from "./services/campaign";
-import { grantChannelAccess } from "./services/grant";
-import { findActiveSubscription } from "./services/subscriptions";
 import { getEnv } from "@/lib/env";
 import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
@@ -61,39 +59,14 @@ export function createBot(token: string): Bot<Context> {
           if (camp) {
             const alreadyUsed = await hasUsedFreeTrial(BigInt(tgUser.id));
             if (alreadyUsed) {
-              // Second attempt at the trial. The trial itself is never granted
-              // twice — but if they still have a LIVE subscription (they paid
-              // for it, or the trial is still running) they must be able to
-              // re-enter the channel, e.g. after leaving by accident.
-              const db = getDb();
-              const urow = await db
-                .select({ id: users.id })
-                .from(users)
-                .where(eq(users.tgUserId, BigInt(tgUser.id)))
-                .limit(1)
-                .then((r) => r[0] ?? null);
-
-              const active = urow ? await findActiveSubscription(urow.id) : null;
-
-              if (urow && active) {
-                await grantChannelAccess({
-                  userId: urow.id,
-                  planName: `до ${active.endsAt
-                    .toISOString()
-                    .replace("T", " ")
-                    .slice(0, 10)}`,
-                });
-                await ctx.reply(
-                  `ℹ️ Бесплатный доступ уже был использован, но твоя подписка ещё активна — новая ссылка в канал отправлена выше.`,
-                );
-              } else {
-                const me = await bot.api.getMe();
-                await ctx.reply(
-                  formatTrialAlreadyUsedMessage(
-                    me.username ?? "WhaleReferral_bot",
-                  ),
-                );
-              }
+              // Trial was already consumed. There is NO free way back in —
+              // leaving or being kicked means payment is required from now on.
+              const me = await bot.api.getMe();
+              await ctx.reply(
+                formatTrialAlreadyUsedMessage(
+                  me.username ?? "WhaleReferral_bot",
+                ),
+              );
             } else {
               const claimed = await claimFreeTrial({
                 tgUserId: BigInt(tgUser.id),
