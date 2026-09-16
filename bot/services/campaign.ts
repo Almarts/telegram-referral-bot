@@ -71,6 +71,36 @@ export async function findCampaignByInviteLink(
   return row;
 }
 
+/**
+ * Find an active campaign by its slug (used as the /start payload of the
+ * bot deep link: t.me/<bot>?start=<slug>).
+ */
+export async function findCampaignBySlug(
+  slug: string,
+): Promise<CampaignRow | null> {
+  if (!slug || slug.length > 40) return null;
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(campaigns)
+    .where(eq(campaigns.slug, slug))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  if (!row.active) return null;
+  if (row.expiresAt.getTime() <= Date.now()) return null;
+  return row;
+}
+
+/**
+ * Resolve the bot deep link a campaign should be shared as.
+ * The campaign slug doubles as the /start payload — Telegram delivers it as
+ * ctx.match on /start, which lets us bind the referral with zero ambiguity.
+ */
+export function campaignBotLink(botUsername: string, slug: string): string {
+  return `https://t.me/${botUsername}?start=${slug}`;
+}
+
 // ── Creation (admin) ─────────────────────────────────────────────────────────
 
 export interface CreateCampaignParams {

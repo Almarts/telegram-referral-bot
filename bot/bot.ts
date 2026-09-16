@@ -24,6 +24,11 @@ import {
   hasUsedFreeTrial,
   formatTrialAlreadyUsedMessage,
 } from "./handlers/campaign";
+import {
+  findCampaignBySlug,
+  campaignBotLink,
+  recordJoin,
+} from "./services/campaign";
 import { getEnv } from "@/lib/env";
 import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
@@ -41,6 +46,70 @@ export function createBot(token: string): Bot<Context> {
         tgLang: tgUser.language_code,
         startPayload: typeof ctx.match === "string" ? ctx.match : undefined,
       });
+
+      // Trial campaign flow: /start <campaignSlug> where the slug belongs to an
+      // active campaign owned by an admin. Grants the one-time 90-day trial and
+      // binds the joiner as the campaign owner's referral.
+      const startPayload =
+        typeof ctx.match === "string" ? ctx.match.trim() : undefined;
+
+      if (startPayload) {
+        try {
+          const camp = await findCampaignBySlug(startPayload);
+          if (camp) {
+            const alreadyUsed = await hasUsedFreeTrial(BigInt(tgUser.id));
+            if (alreadyUsed) {
+              const me = await bot.api.getMe();
+              await ctx.reply(
+                formatTrialAlreadyUsedMessage(
+                  me.username ?? "WhaleReferral_bot",
+                ),
+              );
+            } else {
+              const claimed = await claimFreeTrial({
+                tgUserId: BigInt(tgUser.id),
+                source: `campaign:${camp.slug}`,
+                days: camp.freeDays,
+              });
+              if (claimed) {
+                const db = getDb();
+                const dbUser = await db
+                  .select({ id: users.id })
+                  .from(users)
+                  .where(eq(users.tgUserId, BigInt(tgUser.id)))
+                  .limit(1)
+                  .then((r) => r[0] ?? null);
+                if (dbUser) {
+                  // Bind the campaign owner as the referral parent (never
+                  // overrides an existing parent — onboarding already set it
+                  // from the payload when the code matched a user).
+                  await db
+                    .update(users)
+                    .set({ parentRefCode: camp.ownerRefCode })
+                    .where(eq(users.id, dbUser.id));
+                  await grantFreeAccess(dbUser.id, camp.freeDays);
+                  await recordJoin({
+                    campaignId: camp.id,
+                    tgUserId: BigInt(tgUser.id),
+                    state: "granted",
+                  });
+                  await ctx.reply("✅ Твой бесплатный доступ активирован!");
+                }
+              } else {
+                const me = await bot.api.getMe();
+                await ctx.reply(
+                  formatTrialAlreadyUsedMessage(
+                    me.username ?? "WhaleReferral_bot",
+                  ),
+                );
+              }
+            }
+          }
+        } catch (err) {
+          console.error("campaign trial flow error:", err);
+          await ctx.reply("❌ Не удалось активировать доступ. Попробуйте позже.");
+        }
+      }
 
       // Free-access link flow: /start free_<CODE>
       const freeCode = parseFreePayload(

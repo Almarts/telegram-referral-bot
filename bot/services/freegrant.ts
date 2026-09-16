@@ -70,11 +70,14 @@ export async function consumeFreeCode(code: string): Promise<boolean> {
  * Grant a free 3-month (90-day) subscription to a user,
  * then send a one-time channel invite link.
  */
-export async function grantFreeAccess(userId: string): Promise<void> {
+export async function grantFreeAccess(
+  userId: string,
+  days: number = FREE_DAYS,
+): Promise<void> {
   const db = getDb();
   const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
   const now = new Date();
-  const endsAt = new Date(now.getTime() + FREE_DAYS * 24 * 60 * 60 * 1000);
+  const endsAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
 
   // Create a zero-value invoice to satisfy the subscription FK (invoiceId notNull).
   const [invoice] = await db

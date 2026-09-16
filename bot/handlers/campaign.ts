@@ -10,6 +10,7 @@ import {
   findCampaignByInviteLink,
   revokeCampaign,
   slugFromInviteName,
+  campaignBotLink,
   CAMPAIGN_FREE_DAYS,
   CAMPAIGN_LINK_TTL_DAYS,
 } from "@/bot/services/campaign";
@@ -35,26 +36,31 @@ export function formatJoinMessage(params: {
 /** Build the campaign-created reply for the admin. */
 export function formatCampaignMessage(params: {
   inviteLink: string;
+  botLink: string;
   freeDays: number;
   ttlDays: number;
   expiresAt: Date;
+  slug: string;
 }): string {
   return [
-    `🔗 Ссылка бесплатного доступа на ${params.freeDays} дней`,
+    `🎁 Ссылка бесплатного доступа на ${params.freeDays} дней`,
     "",
-    params.inviteLink,
+    params.botLink,
     "",
-    `Многоразовая. Активна ${params.ttlDays} дней (до ${params.expiresAt
+    `Активна ${params.ttlDays} дней (до ${params.expiresAt
       .toISOString()
       .replace("T", " ")
-      .slice(0, 16)} UTC).`,
+      .slice(0, 16)} UTC). Многоразовая.`,
     "",
-    "Каждый, кто перейдёт и нажмёт /start, получит:",
+    "Каждый, кто перейдёт и нажмёт «Старт», получит:",
     `• бесплатный доступ на ${params.freeDays} дней (один раз на аккаунт)`,
-    "• статус вашего реферала (комиссии с его оплат)",
+    "• статус вашего реферала — комиссии с его оплат",
     "",
     "Напоминания о покупке придут за 7 дней и за 24 часа до конца доступа.",
-    "Повторно бесплатный доступ выдать нельзя — после истечения только оплата.",
+    "Повторно бесплатный доступ не выдаётся — после истечения только оплата.",
+    "",
+    `Резервная ссылка прямо в канал (без триала): ${params.inviteLink}`,
+    `Код компании: ${params.slug}`,
   ].join("\n");
 }
 
@@ -147,12 +153,17 @@ export async function handleCampaign(ctx: Context): Promise<void> {
       linkTtlDays: Math.round(ttlDays),
     });
 
+    const me = await ctx.api.getMe();
+    const botUsername = me.username ?? "WhaleReferral_bot";
+
     await ctx.reply(
       formatCampaignMessage({
         inviteLink: row.inviteLink,
+        botLink: campaignBotLink(botUsername, row.slug),
         freeDays: row.freeDays,
         ttlDays: Math.round(ttlDays),
         expiresAt: row.expiresAt,
+        slug: row.slug,
       }),
       { link_preview_options: { is_disabled: true } },
     );
