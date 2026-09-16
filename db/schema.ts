@@ -235,6 +235,25 @@ export const campaignJoins = pgTable(
   ],
 );
 
+/**
+ * One free trial per user, globally. A row here permanently marks that a
+ * Telegram user has already consumed their free-access trial — regardless of
+ * which campaign link (or /free code) granted it. Never deleted when a
+ * subscription expires, so re-following another campaign link will not grant
+ * a second trial.
+ */
+export const freeTrialGrants = pgTable(
+  "free_trial_grants",
+  {
+    tgUserId: bigint("tg_user_id", { mode: "bigint" }).primaryKey(),
+    source: text("source").notNull(),
+    days: integer("days").notNull(),
+    grantedAt: timestamp("granted_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+);
+
 // ── Sequences ────────────────────────────────────────────────────────────────
 
 export const derivIndexSeq = pgSequence("deriv_index_seq", {

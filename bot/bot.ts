@@ -19,6 +19,11 @@ import {
   consumeFreeCode,
   parseFreePayload,
 } from "./services/freegrant";
+import {
+  claimFreeTrial,
+  hasUsedFreeTrial,
+  formatTrialAlreadyUsedMessage,
+} from "./handlers/campaign";
 import { getEnv } from "@/lib/env";
 import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
@@ -43,21 +48,47 @@ export function createBot(token: string): Bot<Context> {
       );
       if (freeCode) {
         try {
-          const ok = await consumeFreeCode(freeCode);
-          if (ok) {
-            const db = getDb();
-            const dbUser = await db
-              .select({ id: users.id })
-              .from(users)
-              .where(eq(users.tgUserId, BigInt(tgUser.id)))
-              .limit(1)
-              .then((r) => r[0] ?? null);
-            if (dbUser) {
-              await grantFreeAccess(dbUser.id);
-              await ctx.reply("✅ Твой бесплатный доступ активирован!");
-            }
+          // One trial per account, ever — check BEFORE consuming the code so a
+          // repeat user does not burn the link for others.
+          const alreadyUsed = await hasUsedFreeTrial(BigInt(tgUser.id));
+          if (alreadyUsed) {
+            const me = await bot.api.getMe();
+            await ctx.reply(
+              formatTrialAlreadyUsedMessage(me.username ?? "WhaleReferral_bot"),
+            );
           } else {
-            await ctx.reply("❌ Эта ссылка недействительна или уже использована.");
+            const ok = await consumeFreeCode(freeCode);
+            if (ok) {
+              const db = getDb();
+              const dbUser = await db
+                .select({ id: users.id })
+                .from(users)
+                .where(eq(users.tgUserId, BigInt(tgUser.id)))
+                .limit(1)
+                .then((r) => r[0] ?? null);
+              if (dbUser) {
+                // Claim the trial slot and re-check atomically: if another
+                // request won the race meanwhile, do not grant a second time.
+                const claimed = await claimFreeTrial({
+                  tgUserId: BigInt(tgUser.id),
+                  source: `free_code:${freeCode.slice(0, 8)}`,
+                  days: 90,
+                });
+                if (claimed) {
+                  await grantFreeAccess(dbUser.id);
+                  await ctx.reply("✅ Твой бесплатный доступ активирован!");
+                } else {
+                  const me = await bot.api.getMe();
+                  await ctx.reply(
+                    formatTrialAlreadyUsedMessage(
+                      me.username ?? "WhaleReferral_bot",
+                    ),
+                  );
+                }
+              }
+            } else {
+              await ctx.reply("❌ Эта ссылка недействительна или уже использована.");
+            }
           }
         } catch (err) {
           console.error("free grant flow error:", err);

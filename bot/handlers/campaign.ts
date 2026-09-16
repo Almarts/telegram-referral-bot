@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import { getBot } from "@/bot/bot";
 import { getDb } from "@/db/client";
-import { users } from "@/db/schema";
+import { users, freeTrialGrants } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import {
@@ -50,10 +50,64 @@ export function formatCampaignMessage(params: {
       .slice(0, 16)} UTC).`,
     "",
     "Каждый, кто перейдёт и нажмёт /start, получит:",
-    `• бесплатный доступ на ${params.freeDays} дней`,
+    `• бесплатный доступ на ${params.freeDays} дней (один раз на аккаунт)`,
     "• статус вашего реферала (комиссии с его оплат)",
     "",
     "Напоминания о покупке придут за 7 дней и за 24 часа до конца доступа.",
+    "Повторно бесплатный доступ выдать нельзя — после истечения только оплата.",
+  ].join("\n");
+}
+
+// ── Trial bookkeeping ────────────────────────────────────────────────────────
+
+/**
+ * Atomically claim the one-time free trial for a Telegram user.
+ *
+ * Returns true when this call is the first ever trial for that user, false if
+ * they already consumed one earlier (even via a different campaign link, and
+ * even if that earlier trial has already expired).
+ *
+ * The primary key on `tg_user_id` makes this race-safe: concurrent attempts
+ * from two different campaign links can never both win.
+ */
+export async function claimFreeTrial(params: {
+  tgUserId: bigint;
+  source: string;
+  days: number;
+}): Promise<boolean> {
+  const db = getDb();
+  const rows = await db
+    .insert(freeTrialGrants)
+    .values({
+      tgUserId: params.tgUserId,
+      source: params.source,
+      days: params.days,
+    })
+    .onConflictDoNothing()
+    .returning();
+  return rows.length > 0;
+}
+
+/** True when the user has already used their one-time free trial. */
+export async function hasUsedFreeTrial(tgUserId: bigint): Promise<boolean> {
+  const db = getDb();
+  const rows = await db
+    .select({ tgUserId: freeTrialGrants.tgUserId })
+    .from(freeTrialGrants)
+    .where(eq(freeTrialGrants.tgUserId, tgUserId))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/** Message shown when a user follows a campaign link but already had a trial. */
+export function formatTrialAlreadyUsedMessage(botUsername: string): string {
+  return [
+    "ℹ️ Бесплатный доступ уже был использован на этом аккаунте.",
+    "",
+    "Повторный бесплатный период не выдаётся — он доступен только один раз.",
+    "",
+    "Чтобы получить доступ к каналу, оформите подписку:",
+    `👉 https://t.me/${botUsername}?start=buy`,
   ].join("\n");
 }
 
@@ -156,6 +210,21 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const me = await bot.api.getMe();
   const username = me.username ?? "WhaleReferral_bot";
 
+  // One trial per account, ever. If this user already consumed a trial via any
+  // earlier campaign link (or /free code), do not grant another one.
+  try {
+    const alreadyUsed = await hasUsedFreeTrial(BigInt(joiner.id));
+    if (alreadyUsed) {
+      await bot.api.sendMessage(
+        Number(joiner.id),
+        formatTrialAlreadyUsedMessage(username),
+      );
+      return;
+    }
+  } catch (err) {
+    console.error("handleChatMemberUpdate: trial check failed:", err);
+  }
+
   try {
     // Ensure the joiner has a user row so /start can bind the parent ref.
     const db = getDb();
@@ -213,6 +282,31 @@ export async function handleJoinRequest(ctx: Context): Promise<void> {
 
   const bot = getBot();
   const channelId = getEnv().DEFAULT_CHANNEL_ID;
+
+  // One trial per account, ever — check before approving the join request.
+  try {
+    const alreadyUsed = await hasUsedFreeTrial(BigInt(req.from.id));
+    if (alreadyUsed) {
+      try {
+        await bot.api.declineChatJoinRequest(
+          Number(channelId),
+          Number(req.from.id),
+        );
+      } catch (err) {
+        console.error("declineChatJoinRequest failed:", err);
+      }
+      const me0 = await bot.api.getMe();
+      await bot.api
+        .sendMessage(
+          Number(req.from.id),
+          formatTrialAlreadyUsedMessage(me0.username ?? "WhaleReferral_bot"),
+        )
+        .catch(() => {});
+      return;
+    }
+  } catch (err) {
+    console.error("handleJoinRequest: trial check failed:", err);
+  }
 
   try {
     await bot.api.approveChatJoinRequest(
