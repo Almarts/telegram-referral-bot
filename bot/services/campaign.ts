@@ -148,6 +148,7 @@ export async function createCampaign(
   const invite = await bot.api.createChatInviteLink(Number(channelId), {
     name: campaignInviteName(slug),
     expire_date: Math.floor(expiresAt.getTime() / 1000),
+    creates_join_request: true,
   });
 
   const [row] = await db

@@ -49,6 +49,28 @@ async function getTelegramUserId(dbUserId: string): Promise<bigint> {
  * Creates a fresh invite link with member_limit=1 (single-use).
  * If the user was previously kicked, unban them first.
  */
+/**
+ * Revoke the channel's open primary invite link.
+ *
+ * Telegram always keeps a "primary" invite link on a channel, and revoking it
+ * makes Telegram mint a fresh one — so this must be called repeatedly (every
+ * cron tick). Links the bot creates pass `creates_join_request: true` and are
+ * left alone; only the open, no-approval primary link is killed.
+ */
+export async function revokeOpenPrimaryLink(): Promise<void> {
+  const bot = getBot();
+  const channelId = getEnv().DEFAULT_CHANNEL_ID;
+  try {
+    const chat = await bot.api.getChat(Number(channelId));
+    const primary = (chat as { invite_link?: string }).invite_link;
+    if (!primary) return;
+    await bot.api.revokeChatInviteLink(Number(channelId), primary);
+    console.log("revokeOpenPrimaryLink: revoked", primary);
+  } catch (err) {
+    console.error("revokeOpenPrimaryLink failed:", err);
+  }
+}
+
 export async function grantChannelAccess(params: GrantParams): Promise<void> {
   const bot = getBot();
   const channelId = getEnv().DEFAULT_CHANNEL_ID;
@@ -75,6 +97,7 @@ export async function grantChannelAccess(params: GrantParams): Promise<void> {
 
     const invite = await bot.api.createChatInviteLink(Number(channelId), {
       member_limit: 1,
+      creates_join_request: true,
     });
 
     const message = formatGrantMessage({

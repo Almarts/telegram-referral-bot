@@ -35,9 +35,10 @@ async function isBuyDisabled(): Promise<boolean> {
   return ks?.buyDisabled ?? false;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const issues: string[] = [];
-  const TG_USER = 944750077;
+  const url = new URL(req.url);
+  const TG_USER = Number(url.searchParams.get("tg") ?? "123456789");
 
   // Simulate handleBuy EXACTLY as in buy.ts
   try {

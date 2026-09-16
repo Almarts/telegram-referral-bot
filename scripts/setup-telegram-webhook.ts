@@ -30,6 +30,16 @@ async function main() {
         url: webhookUrl,
         secret_token: secret,
         drop_pending_updates: true,
+        // Explicitly subscribe to membership updates. Without this Telegram's
+        // default set does not reliably deliver chat_join_request for channels,
+        // which is the only signal the bot gets when someone requests to join.
+        allowed_updates: [
+          "message",
+          "callback_query",
+          "chat_member",
+          "chat_join_request",
+          "my_chat_member",
+        ],
       }),
     },
   );

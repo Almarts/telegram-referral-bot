@@ -84,14 +84,14 @@ export async function GET(): Promise<Response> {
       .then((r) => r[0] ?? null);
     log(`TX789477 DB check: ${txCheck ? `inv=${txCheck.id?.slice?.(0,8)} user=${txCheck.userId?.slice?.(0,8)} status=${txCheck.status}` : "NOT_FOUND"}`);
 
-    // Check if chilli (e8cd7ec1) has active sub
-    const chilliSub = await db
+    // Check whether the invoice owner has an active subscription
+    const ownerSub = await db
       .select({ id: subscriptions.id, status: subscriptions.status })
       .from(subscriptions)
       .where(and(eq(subscriptions.userId, invoice.userId), eq(subscriptions.status, "active"), gt(subscriptions.endsAt, new Date())))
       .limit(1)
       .then((r) => r[0] ?? null);
-    log(`CHILLI has active sub: ${chilliSub ? `sub=${chilliSub.id?.slice?.(0,8)} status=${chilliSub.status}` : "NO"}`);
+    log(`Owner has active sub: ${ownerSub ? `sub=${ownerSub.id?.slice?.(0,8)} status=${ownerSub.status}` : "NO"}`);
 
   } catch (err: any) {
     const msg = err instanceof Error ? `${err.name}: ${err.message}\n${err.stack}` : String(err);

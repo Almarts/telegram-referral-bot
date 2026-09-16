@@ -116,7 +116,10 @@ export async function grantFreeAccess(
   try {
     const bot = getBot();
     const channelId = getEnv().DEFAULT_CHANNEL_ID;
-    const inv = await bot.api.createChatInviteLink(Number(channelId), { member_limit: 1 });
+    const inv = await bot.api.createChatInviteLink(Number(channelId), {
+      member_limit: 1,
+      creates_join_request: true,
+    });
     const msg = [
       "🎁 Тебе выдан бесплатный доступ на 3 месяца!",
       "",

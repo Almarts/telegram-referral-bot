@@ -16,9 +16,9 @@ import { createFreeCode, FREE_DAYS } from "@/bot/services/freegrant";
  * - vip_bps: optional VIP basis points (e.g. 5000 = 50%). Without it uses tiered system.
  *
  * Examples:
- *   /makecreator 944750077          — regular creator, tiered commissions
- *   /makecreator 944750077 EW0B4C   — creator with parent al_marts
- *   /makecreator 944750077 EW0B4C 5000 — VIP creator, 50% fixed
+ *   /makecreator 123456789          — regular creator, tiered commissions
+ *   /makecreator 123456789 EW0B4C   — creator with parent al_marts
+ *   /makecreator 123456789 EW0B4C 5000 — VIP creator, 50% fixed
  */
 export async function handleMakeCreator(ctx: Context): Promise<void> {
   const tgUser = ctx.from;
@@ -36,9 +36,9 @@ export async function handleMakeCreator(ctx: Context): Promise<void> {
       "❌ Использование:\n" +
       "`/makecreator tg_id [parent_ref_code] [vip_bps]`\n\n" +
       "Примеры:\n" +
-      "`/makecreator 944750077` — обычный создатель\n" +
-      "`/makecreator 944750077 EW0B4C` — создатель + реф от al_marts\n" +
-      "`/makecreator 944750077 EW0B4C 5000` — VIP создатель (50%)",
+      "`/makecreator 123456789` — обычный создатель\n" +
+      "`/makecreator 123456789 EW0B4C` — создатель + реф от al_marts\n" +
+      "`/makecreator 123456789 EW0B4C 5000` — VIP создатель (50%)",
       { parse_mode: "Markdown" },
     );
     return;

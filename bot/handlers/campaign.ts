@@ -1,8 +1,8 @@
 import type { Context } from "grammy";
 import { getBot } from "@/bot/bot";
 import { getDb } from "@/db/client";
-import { users, freeTrialGrants } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { users, freeTrialGrants, subscriptions } from "@/db/schema";
+import { and, eq, gt } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import {
   campaignInviteName,
@@ -103,6 +103,65 @@ export async function hasUsedFreeTrial(tgUserId: bigint): Promise<boolean> {
     .where(eq(freeTrialGrants.tgUserId, tgUserId))
     .limit(1);
   return rows.length > 0;
+}
+
+/** True when the user has a paid subscription that has not expired yet. */
+export async function hasActiveSubscription(tgUserId: bigint): Promise<boolean> {
+  const db = getDb();
+  const row = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.tgUserId, tgUserId))
+    .limit(1)
+    .then((r) => r[0] ?? null);
+  if (!row) return false;
+
+  const sub = await db
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.userId, row.id),
+        eq(subscriptions.status, "active"),
+        gt(subscriptions.endsAt, new Date()),
+      ),
+    )
+    .limit(1);
+  return sub.length > 0;
+}
+
+/**
+ * Attribute a join request that came through a campaign link: make sure a user
+ * row exists and bind the parent ref code (only when it was never set).
+ */
+export async function attributeCampaignJoin(params: {
+  tgUserId: bigint;
+  campaign: { slug: string; ownerRefCode: string; freeDays: number };
+  botUsername: string;
+}): Promise<void> {
+  const db = getDb();
+  const existing = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.tgUserId, params.tgUserId))
+    .limit(1)
+    .then((r) => r[0] ?? null);
+
+  if (!existing) {
+    await db
+      .insert(users)
+      .values({
+        tgUserId: params.tgUserId,
+        parentRefCode: params.campaign.ownerRefCode,
+      })
+      .onConflictDoNothing();
+    return;
+  }
+
+  await db
+    .update(users)
+    .set({ parentRefCode: params.campaign.ownerRefCode })
+    .where(eq(users.id, existing.id));
 }
 
 /** Message shown when a user follows a campaign link but already had a trial. */
@@ -278,47 +337,80 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
 }
 
 /**
- * Handle a join request (when the channel requires admin approval).
- * Same campaign matching logic; the request is approved automatically.
+ * Handle a join request (the channel requires admin approval for every invite
+ * link the bot creates with `creates_join_request: true`).
+ *
+ * Policy:
+ *   • active paid subscription   → approve
+ *   • free trial not yet claimed → approve + claim the trial
+ *   • neither                    → decline (with a hint on how to buy)
+ *
+ * This is the ONLY way into the channel once the public unlimited link is
+ * revoked — leaving and coming back does not help, because a new join request
+ * is checked against the same rules.
  */
 export async function handleJoinRequest(ctx: Context): Promise<void> {
   const req = ctx.chatJoinRequest;
   if (!req) return;
 
-  const inviteLink = req.invite_link?.invite_link;
-  if (!inviteLink) return;
-
-  const campaign = await findCampaignByInviteLink(inviteLink);
-  if (!campaign) return;
-
   const bot = getBot();
   const channelId = getEnv().DEFAULT_CHANNEL_ID;
 
-  // One trial per account, ever — check before approving the join request.
-  try {
-    const alreadyUsed = await hasUsedFreeTrial(BigInt(req.from.id));
-    if (alreadyUsed) {
-      try {
-        await bot.api.declineChatJoinRequest(
-          Number(channelId),
-          Number(req.from.id),
-        );
-      } catch (err) {
-        console.error("declineChatJoinRequest failed:", err);
-      }
-      const me0 = await bot.api.getMe();
-      await bot.api
-        .sendMessage(
-          Number(req.from.id),
-          formatTrialAlreadyUsedMessage(me0.username ?? "WhaleReferral_bot"),
-        )
-        .catch(() => {});
-      return;
+  // Did the request come through a campaign link? Used only to attribute the
+  // referral — access is decided by subscription/trial below, not by campaign.
+  const inviteLink = req.invite_link?.invite_link;
+  const campaign = inviteLink
+    ? await findCampaignByInviteLink(inviteLink).catch(() => null)
+    : null;
+
+  // 1. Active paid subscription → always approve.
+  const paidActive = await hasActiveSubscription(BigInt(req.from.id)).catch(
+    () => false,
+  );
+
+  if (paidActive) {
+    try {
+      await bot.api.approveChatJoinRequest(
+        Number(channelId),
+        Number(req.from.id),
+      );
+    } catch (err) {
+      console.error("approveChatJoinRequest (paid) failed:", err);
     }
-  } catch (err) {
-    console.error("handleJoinRequest: trial check failed:", err);
+    return;
   }
 
+  // 2. No paid sub — the one-time free trial is the only other way in.
+  let trialGranted = false;
+  try {
+    trialGranted = await claimFreeTrial({
+      tgUserId: BigInt(req.from.id),
+      source: campaign ? `campaign:${campaign.slug}` : "join_request",
+      days: campaign?.freeDays ?? CAMPAIGN_FREE_DAYS,
+    });
+  } catch (err) {
+    console.error("handleJoinRequest: trial claim failed:", err);
+  }
+
+  const me = await bot.api.getMe();
+  const username = me.username ?? "WhaleReferral_bot";
+
+  if (!trialGranted) {
+    try {
+      await bot.api.declineChatJoinRequest(
+        Number(channelId),
+        Number(req.from.id),
+      );
+    } catch (err) {
+      console.error("declineChatJoinRequest failed:", err);
+    }
+    await bot.api
+      .sendMessage(Number(req.from.id), formatTrialAlreadyUsedMessage(username))
+      .catch(() => {});
+    return;
+  }
+
+  // 3. First-ever trial → approve and attribute the referral.
   try {
     await bot.api.approveChatJoinRequest(
       Number(channelId),
@@ -329,21 +421,26 @@ export async function handleJoinRequest(ctx: Context): Promise<void> {
     return;
   }
 
-  const me = await bot.api.getMe();
-  const username = me.username ?? "WhaleReferral_bot";
+  if (campaign) {
+    await attributeCampaignJoin({
+      tgUserId: BigInt(req.from.id),
+      campaign,
+      botUsername: username,
+    }).catch((err) =>
+      console.error("handleJoinRequest: attribution failed:", err),
+    );
+  }
 
-  try {
-    await bot.api.sendMessage(
+  await bot.api
+    .sendMessage(
       Number(req.from.id),
       formatJoinMessage({
         botUsername: username,
-        ownerRefCode: campaign.ownerRefCode,
-        freeDays: campaign.freeDays,
+        ownerRefCode: campaign?.ownerRefCode ?? "",
+        freeDays: campaign?.freeDays ?? CAMPAIGN_FREE_DAYS,
       }),
-    );
-  } catch (err) {
-    console.error("handleJoinRequest: DM failed for", req.from.id, err);
-  }
+    )
+    .catch((err) => console.error("handleJoinRequest: DM failed:", err));
 }
 
 export { campaignInviteName, slugFromInviteName };
