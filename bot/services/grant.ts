@@ -95,8 +95,10 @@ export async function grantChannelAccess(params: GrantParams): Promise<void> {
       // getChatMember can fail if user never interacted — ignore
     }
 
+    // NOTE: Telegram rejects member_limit together with creates_join_request,
+    // so only the join-request flag is passed. Access is still gated by
+    // handleJoinRequest (subscription check).
     const invite = await bot.api.createChatInviteLink(Number(channelId), {
-      member_limit: 1,
       creates_join_request: true,
     });
 

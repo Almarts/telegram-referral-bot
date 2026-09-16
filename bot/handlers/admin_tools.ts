@@ -151,12 +151,12 @@ export async function handleMakeCreator(ctx: Context): Promise<void> {
       } catch (_) {}
 
       const invite = await bot.api.createChatInviteLink(Number(channelId), {
-        member_limit: 1,
+        creates_join_request: true,
       });
 
       await bot.api.sendMessage(
         Number(target.tgUserId),
-        `🎉 Ты стал создателем!\n\n🔗 Твоя ссылка на вход в канал:\n${invite.invite_link}\n\nДействительна до первого использования.`,
+        `🎉 Ты стал создателем!\n\n🔗 Твоя ссылка на вход в канал:\n${invite.invite_link}\n\nПодай заявку — бот одобрит её автоматически.`,
       );
 
       // Send creator keyboard separately
