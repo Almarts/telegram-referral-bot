@@ -14,6 +14,7 @@ import {
   CAMPAIGN_FREE_DAYS,
   CAMPAIGN_LINK_TTL_DAYS,
 } from "@/bot/services/campaign";
+import { grantFreeAccess } from "@/bot/services/freegrant";
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -103,6 +104,47 @@ export async function hasUsedFreeTrial(tgUserId: bigint): Promise<boolean> {
     .where(eq(freeTrialGrants.tgUserId, tgUserId))
     .limit(1);
   return rows.length > 0;
+}
+
+/**
+ * Ensure a users row exists for this Telegram user and return its uuid.
+ * Binds the parent ref only when it was never set (never overrides).
+ */
+export async function ensureUserRow(params: {
+  tgUserId: bigint;
+  tgUsername?: string | null;
+  tgLang?: string | null;
+  parentRefCode?: string | null;
+}): Promise<string | null> {
+  const db = getDb();
+  const existing = await db
+    .select({ id: users.id, parentRefCode: users.parentRefCode })
+    .from(users)
+    .where(eq(users.tgUserId, params.tgUserId))
+    .limit(1)
+    .then((r) => r[0] ?? null);
+
+  if (!existing) {
+    const inserted = await db
+      .insert(users)
+      .values({
+        tgUserId: params.tgUserId,
+        tgUsername: params.tgUsername ?? null,
+        tgLang: params.tgLang ?? null,
+        parentRefCode: params.parentRefCode ?? null,
+      })
+      .onConflictDoNothing()
+      .returning({ id: users.id });
+    return inserted[0]?.id ?? null;
+  }
+
+  if (!existing.parentRefCode && params.parentRefCode) {
+    await db
+      .update(users)
+      .set({ parentRefCode: params.parentRefCode })
+      .where(eq(users.id, existing.id));
+  }
+  return existing.id;
 }
 
 /** True when the user has a paid subscription that has not expired yet. */
@@ -389,7 +431,24 @@ export async function handleJoinRequest(ctx: Context): Promise<void> {
     return;
   }
 
-  // 3. First-ever trial → approve and attribute the referral.
+  // 3. First-ever trial → create the real subscription and hand over a channel
+  //    invite link. Without this the trial lived only in `free_trial_grants`
+  //    while /start reads `subscriptions` — the user got "buy access" even
+  //    though the trial was recorded.
+  // Ensure a user row exists (needed for the subscription FK + attribution).
+  let userId: string | null = null;
+  try {
+    userId = await ensureUserRow({
+      tgUserId: BigInt(req.from.id),
+      tgUsername: req.from.username ?? null,
+      tgLang: req.from.language_code ?? null,
+      parentRefCode: campaign?.ownerRefCode ?? null,
+    });
+  } catch (err) {
+    console.error("handleJoinRequest: ensureUserRow failed:", err);
+  }
+
+  // Approve the join request first so the link works the moment it arrives.
   try {
     await bot.api.approveChatJoinRequest(
       Number(channelId),
@@ -397,19 +456,30 @@ export async function handleJoinRequest(ctx: Context): Promise<void> {
     );
   } catch (err) {
     console.error("approveChatJoinRequest failed:", err);
+  }
+
+  if (userId) {
+    const days = campaign?.freeDays ?? CAMPAIGN_FREE_DAYS;
+    // grantFreeAccess writes the paid-zero invoice + active subscription and
+    // sends the one-time join link to the user.
+    await grantFreeAccess(userId, days).catch((err) => {
+      console.error("handleJoinRequest: grantFreeAccess failed:", err);
+      // Fall back to the deep link so the user is not left with silence.
+      bot.api
+        .sendMessage(
+          Number(req.from.id),
+          formatJoinMessage({
+            botUsername: username,
+            ownerRefCode: campaign?.ownerRefCode ?? "",
+            freeDays: days,
+          }),
+        )
+        .catch(() => {});
+    });
     return;
   }
 
-  if (campaign) {
-    await attributeCampaignJoin({
-      tgUserId: BigInt(req.from.id),
-      campaign,
-      botUsername: username,
-    }).catch((err) =>
-      console.error("handleJoinRequest: attribution failed:", err),
-    );
-  }
-
+  // Could not create the user row — still tell them something useful.
   await bot.api
     .sendMessage(
       Number(req.from.id),
