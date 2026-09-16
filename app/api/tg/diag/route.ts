@@ -24,8 +24,13 @@ export async function POST(req: Request): Promise<Response> {
         "DIAG " + body.slice(0, 1500),
       )}`,
     );
+    return new Response("ok");
   } catch (e) {
     void e;
   }
   return new Response("ok");
+}
+
+export async function GET(): Promise<Response> {
+  return new Response("diag alive");
 }
