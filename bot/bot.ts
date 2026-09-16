@@ -95,7 +95,9 @@ export function createBot(token: string): Bot<Context> {
                     tgUserId: BigInt(tgUser.id),
                     state: "granted",
                   });
-                  await ctx.reply("✅ Твой бесплатный доступ активирован!");
+                  // grantFreeAccess already sent the "access activated + invite
+                  // link" message — do not reply here or the user gets a second,
+                  // redundant confirmation.
                 }
               } else {
                 const me = await bot.api.getMe();
@@ -146,8 +148,9 @@ export function createBot(token: string): Bot<Context> {
                   days: 90,
                 });
                 if (claimed) {
+                  // grantFreeAccess sends the "access activated + invite link"
+                  // message itself — no extra confirmation here.
                   await grantFreeAccess(dbUser.id);
-                  await ctx.reply("✅ Твой бесплатный доступ активирован!");
                 } else {
                   const me = await bot.api.getMe();
                   await ctx.reply(
