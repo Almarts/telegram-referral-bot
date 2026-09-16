@@ -194,6 +194,47 @@ export const opsKillSwitch = pgTable("ops_kill_switch", {
   setAt: timestamp("set_at", { withTimezone: true }),
 });
 
+// ── Campaigns (multi-use free-access invite links) ───────────────────────────
+
+export const campaigns = pgTable(
+  "campaigns",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    slug: text("slug").notNull().unique(),
+    inviteLink: text("invite_link").notNull().unique(),
+    inviteName: text("invite_name").notNull(),
+    freeDays: integer("free_days").notNull().default(90),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ownerUserId: uuid("owner_user_id").references(() => users.id),
+    ownerRefCode: text("owner_ref_code").notNull(),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("ix_campaigns_active_expires").on(table.active, table.expiresAt)],
+);
+
+export const campaignJoins = pgTable(
+  "campaign_joins",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id),
+    tgUserId: bigint("tg_user_id", { mode: "bigint" }).notNull(),
+    state: text("state").notNull(),
+    detail: text("detail"),
+    joinedAt: timestamp("joined_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_campaign_joins").on(table.campaignId, table.tgUserId, table.state),
+    index("ix_campaign_joins_tg").on(table.tgUserId),
+  ],
+);
+
 // ── Sequences ────────────────────────────────────────────────────────────────
 
 export const derivIndexSeq = pgSequence("deriv_index_seq", {

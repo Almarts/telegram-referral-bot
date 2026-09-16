@@ -7,6 +7,12 @@ import { handleEarnings } from "./handlers/earnings";
 import { handleDashboard } from "./handlers/admin_dashboard";
 import { handleCommissions, handleCommissionsCallback } from "./handlers/commissions";
 import { handleMakeCreator, handleInvite, handleFree } from "./handlers/admin_tools";
+import {
+  handleCampaign,
+  handleCampaignStop,
+  handleChatMemberUpdate,
+  handleJoinRequest,
+} from "./handlers/campaign";
 import { onboardUser } from "./services/onboarding";
 import {
   grantFreeAccess,
@@ -166,6 +172,40 @@ export function createBot(token: string): Bot<Context> {
     const adminIds = getEnv().ADMIN_TG_IDS;
     if (!adminIds.includes(BigInt(tgUser.id))) return;
     await handleFree(ctx);
+  });
+
+  // Admin: reusable free-access campaign link (default: 90 days free, link live 14 days)
+  bot.command("campaign", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    await handleCampaign(ctx);
+  });
+
+  bot.command("campaignstop", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) return;
+    const adminIds = getEnv().ADMIN_TG_IDS;
+    if (!adminIds.includes(BigInt(tgUser.id))) return;
+    await handleCampaignStop(ctx);
+  });
+
+  // Channel joins via a campaign invite link.
+  bot.on("chat_member", async (ctx) => {
+    try {
+      await handleChatMemberUpdate(ctx);
+    } catch (e) {
+      console.error("chat_member handler error:", e);
+    }
+  });
+
+  bot.on("chat_join_request", async (ctx) => {
+    try {
+      await handleJoinRequest(ctx);
+    } catch (e) {
+      console.error("chat_join_request handler error:", e);
+    }
   });
 
   // Handle TXID — user pastes transaction hash after payment
