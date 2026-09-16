@@ -254,11 +254,19 @@ export async function handleCampaignStop(ctx: Context): Promise<void> {
 /**
  * Handle a new chat member joining the channel.
  *
- * Telegram sends `chat_member` updates to channel admins. We look at the
- * invite link used (`invite_link.invite_link`) and match it against active
- * campaigns. Because a channel invite link cannot carry a start payload,
- * the joiner is DM'd a deep link carrying the owner's ref code — the
- * referral is only bound when they press /start.
+ * Telegram sends `chat_member` updates to channel admins. We match the invite
+ * link against active campaigns and use it purely as a best-effort opportunity
+ * to bind a referral.
+ *
+ * IMPORTANT: this handler must NOT grant access and must NOT message the joiner
+ * about trials. A channel join that came through a join-request link is already
+ * handled by `handleJoinRequest` (chat_join_request). Both updates arrive
+ * nearly simultaneously, so any "trial already used" DM sent from here would
+ * race the real grant and produce a false rejection right next to the genuine
+ * welcome message. Attribution only, silently.
+ *
+ * Returns early when there is no link at all (invite_link is absent for joins
+ * via a public username, a saved link, or any non-invite entry path).
  */
 export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const upd = ctx.chatMember;
@@ -276,30 +284,10 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const joiner = upd.new_chat_member.user;
   if (joiner.is_bot) return;
 
-  const bot = getBot();
-  const me = await bot.api.getMe();
-  const username = me.username ?? "WhaleReferral_bot";
-
-  // One trial per account, ever. If this user already consumed a trial via any
-  // earlier campaign link (or /free code), do not grant another one.
   try {
-    const alreadyUsed = await hasUsedFreeTrial(BigInt(joiner.id));
-    if (alreadyUsed) {
-      await bot.api.sendMessage(
-        Number(joiner.id),
-        formatTrialAlreadyUsedMessage(username),
-      );
-      return;
-    }
-  } catch (err) {
-    console.error("handleChatMemberUpdate: trial check failed:", err);
-  }
-
-  try {
-    // Ensure the joiner has a user row so /start can bind the parent ref.
     const db = getDb();
     const existing = await db
-      .select({ id: users.id })
+      .select({ id: users.id, parentRefCode: users.parentRefCode })
       .from(users)
       .where(eq(users.tgUserId, BigInt(joiner.id)))
       .limit(1)
@@ -315,24 +303,15 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
           parentRefCode: campaign.ownerRefCode,
         })
         .onConflictDoNothing();
-    } else {
-      // Bind the parent ref only if it was never set (idempotent, never overrides).
+    } else if (!existing.parentRefCode) {
+      // Bind only when it was never set — never override an existing parent.
       await db
         .update(users)
         .set({ parentRefCode: campaign.ownerRefCode })
         .where(eq(users.id, existing.id));
     }
-
-    await bot.api.sendMessage(
-      Number(joiner.id),
-      formatJoinMessage({
-        botUsername: username,
-        ownerRefCode: campaign.ownerRefCode,
-        freeDays: campaign.freeDays,
-      }),
-    );
   } catch (err) {
-    console.error("handleChatMemberUpdate: failed for", joiner.id, err);
+    console.error("handleChatMemberUpdate: attribution failed:", err);
   }
 }
 
