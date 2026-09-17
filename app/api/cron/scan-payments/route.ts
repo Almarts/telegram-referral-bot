@@ -21,11 +21,16 @@ export async function GET(req: Request): Promise<Response> {
     const db = getDb();
     const tron = getTron();
     const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
-    let settled = 0;
 
-    // Fetch pending invoices (not expired yet)
+    // Fetch pending invoices (not expired yet).
+    // Each invoice carries the address the user was actually shown, so rotating
+    // TRON_COLD_WALLET_ADDRESS does not strand invoices that are still open.
     const pending = await db
-      .select({ id: invoices.id, amountUsdt: invoices.amountUsdt })
+      .select({
+        id: invoices.id,
+        amountUsdt: invoices.amountUsdt,
+        depositAddress: invoices.depositAddress,
+      })
       .from(invoices)
       .where(
         and(
@@ -39,36 +44,46 @@ export async function GET(req: Request): Promise<Response> {
       return { settled: 0 };
     }
 
-    // Get recent transfers to cold wallet
-    const transfers = await tron.listUsdtTransfersTo(coldAddress, {
-      sinceMs: Date.now() - 30 * 60 * 1000, // last 30 min
-    });
-
-    if (transfers.length === 0) {
-      return { settled: 0 };
+    // Group by deposit address: one blockchain lookup per distinct address
+    // instead of assuming every invoice points at the current cold wallet.
+    const byAddress = new Map<string, typeof pending>();
+    for (const inv of pending) {
+      const addr = inv.depositAddress || coldAddress;
+      if (!byAddress.has(addr)) byAddress.set(addr, []);
+      byAddress.get(addr)!.push(inv);
     }
 
-    for (const inv of pending) {
-      // Find a matching transfer
-      const match = transfers.find(
-        (t) => t.confirmed && gte(t.amountUsdt, inv.amountUsdt),
-      );
-      if (!match) continue;
+    let settled = 0;
 
-      const result = await settleByTxId(inv.id, match.txHash);
-      if (!result.settled) continue;
-      settled++;
+    for (const [addr, invoicesForAddr] of Array.from(byAddress.entries())) {
+      const transfers = await tron.listUsdtTransfersTo(addr, {
+        sinceMs: Date.now() - 30 * 60 * 1000, // last 30 min
+      });
 
-      if (result.userId && result.planName) {
-        await grantChannelAccess({
-          userId: result.userId,
-          planName: result.planName,
-        }).catch((err) => console.error("grant:", err));
+      if (transfers.length === 0) continue;
+
+      for (const inv of invoicesForAddr) {
+        // Find a matching transfer
+        const match = transfers.find(
+          (t) => t.confirmed && gte(t.amountUsdt, inv.amountUsdt),
+        );
+        if (!match) continue;
+
+        const result = await settleByTxId(inv.id, match.txHash);
+        if (result.status !== "paid") continue;
+        settled++;
+
+        if (result.userId && result.planName) {
+          await grantChannelAccess({
+            userId: result.userId,
+            planName: result.planName,
+          }).catch((err) => console.error("grant:", err));
+        }
+
+        await accrueCommissions(result.invoiceId).catch((err) =>
+          console.error("commissions:", err),
+        );
       }
-
-      await accrueCommissions(result.invoiceId).catch((err) =>
-        console.error("commissions:", err),
-      );
     }
 
     return { settled };

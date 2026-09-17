@@ -109,7 +109,6 @@ async function checkTxidDirect(
 
 export async function settleByTxId(invoiceId: string, txId: string): Promise<SettleResult> {
   const db = getDb();
-  const coldAddress = getEnv().TRON_COLD_WALLET_ADDRESS;
 
   // 1. Fetch pending invoice
   const invoice = await db
@@ -122,6 +121,16 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
   if (!invoice) {
     return { status: "no_invoice", invoiceId };
   }
+
+  // NOTE: the expected recipient comes from the INVOICE, not from env.
+  //
+  // The invoice stores the address that was actually shown to the user when it
+  // was created. Reading it back here means rotating TRON_COLD_WALLET_ADDRESS
+  // never invalidates invoices that are still open — an invoice issued before
+  // the rotation stays payable to the address the user was told about.
+  //
+  // Fall back to env only for legacy rows that somehow lack a deposit address.
+  const coldAddress = invoice.depositAddress || getEnv().TRON_COLD_WALLET_ADDRESS;
 
   // 2. Check if txHash already used by ANY invoice in the system (including non-open)
   // Do this FIRST — if it's in our DB, it was already used regardless of blockchain state
