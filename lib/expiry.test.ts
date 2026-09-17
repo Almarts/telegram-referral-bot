@@ -66,6 +66,35 @@ describe("computeNudges", () => {
     expect(result).toHaveLength(2);
     expect(result.map((r) => r.window).sort()).toEqual(["24h", "7d"]);
   });
+
+  it("catches a sub whose deadline passed between two hourly ticks (regression)", () => {
+    // Cron runs hourly, so a tick can land up to an hour after the moment the
+    // sub entered the T-7d window. The window must be wide enough to cover that
+    // whole gap; when it was only 60s wide, these subs slipped through and no
+    // reminder was ever delivered.
+    const firstTickOfHour = new Date("2026-05-29T00:00:00Z");
+    // ends_at = 7d + 53min from the tick -> entered the T-7d window 53 min ago,
+    // i.e. strictly inside [7d, 7d + 1h) measured from this tick.
+    const s = sub({
+      endsAt: new Date(
+        firstTickOfHour.getTime() + 7 * 24 * 60 * 60 * 1000 + 53 * 60 * 1000,
+      ),
+    });
+    const result = computeNudges([s], new Set(), firstTickOfHour);
+    expect(result).toHaveLength(1);
+    expect(result[0].window).toBe("7d");
+  });
+
+  it("does not re-send within the same window across consecutive hourly ticks", () => {
+    const tick = new Date("2026-05-29T00:00:00Z");
+    const s = sub({
+      endsAt: new Date(tick.getTime() + 7 * 24 * 60 * 60 * 1000 + 53 * 60 * 1000),
+    });
+    expect(computeNudges([s], new Set(), tick)).toHaveLength(1);
+    // next hourly tick, same window — already recorded, must stay silent
+    const nextTick = new Date(tick.getTime() + 60 * 60 * 1000);
+    expect(computeNudges([s], new Set(["sub-1:7d"]), nextTick)).toHaveLength(0);
+  });
 });
 
 describe("computeExpiries", () => {
