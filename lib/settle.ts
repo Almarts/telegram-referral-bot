@@ -9,6 +9,8 @@ export type SettleStatus =
   | "paid"              // ✅ всё ок, доступ можно дать
   | "not_found"         // ❌ TXID не найден в блокчейне
   | "wrong_address"     // ❌ транзакция не на тот адрес
+  | "not_usdt"          // ❌ транзакция не является переводом USDT
+  | "rpc_error"         // ❌ не удалось опросить блокчейн (сеть/лимит) — стоит повторить
   | "underpaid"         // ❌ сумма меньше нужной
   | "too_old"           // ❌ транзакция старше заявки
   | "duplicate_txid"    // ❌ TXID уже использован
@@ -24,6 +26,10 @@ export interface SettleResult {
   subscriptionId?: string;
   txHash?: string;
 }
+
+export type VerifyUsdtResult =
+  | { ok: true; from: string; to: string; amountUsdt: string }
+  | { ok: false; reason: "not_found" | "not_confirmed" | "not_usdt" | "wrong_address" | "rpc_error"; detail?: string };
 
 export function computeRenewalStart(now: Date, activeSubEndsAt?: Date): Date {
   if (activeSubEndsAt && activeSubEndsAt > now) {
@@ -44,14 +50,20 @@ async function checkTxidDirect(
   expectedAmountUsdt: string,
 ): Promise<
   | { ok: true; from: string; to: string; amountUsdt: string; blockTimestamp: number }
-  | { ok: false; reason: "not_found" | "wrong_address" | "underpaid" | "too_old"; detail?: string }
+  | { ok: false; reason: "not_found" | "wrong_address" | "underpaid" | "too_old" | "not_usdt" | "rpc_error"; detail?: string }
 > {
   try {
     const { getTron } = await import("./tron");
     const verifyResult = await getTron().verifyUsdtTransfer(txId, coldAddress);
 
-    if (!verifyResult) {
-      return { ok: false, reason: "not_found", detail: "USDT TRC20 transfer not found or not confirmed" };
+    if (verifyResult.ok === false) {
+      // Preserve the real reason: "not found" is only one of several failures.
+      // A TronGrid outage must not be reported to the user as "wrong TXID".
+      return {
+        ok: false,
+        reason: verifyResult.reason === "not_confirmed" ? "not_found" : verifyResult.reason,
+        detail: verifyResult.detail ?? "USDT transfer could not be verified",
+      };
     }
 
     // Recipient is verified inside verifyUsdtTransfer (returns null if not to cold wallet).
@@ -149,7 +161,7 @@ export async function settleByTxId(invoiceId: string, txId: string): Promise<Set
   // 4. Check TXID on blockchain with detailed diagnostics
   const check = await checkTxidDirect(txId, coldAddress, invoice.createdAt, invoice.amountUsdt);
 
-  if (!check.ok) {
+  if (check.ok === false) {
     return {
       status: check.reason,
       invoiceId,

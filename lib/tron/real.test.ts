@@ -6,6 +6,7 @@ import {
   tronAddressFromPublicKey,
   parseUsdtTransfers,
   usdtToAtomic,
+  decodeTrc20Transfer,
 } from "./real";
 
 // BIP32 test vector 1 master xprv (seed = 000102030405060708090a0b0c0d0e0f)
@@ -234,5 +235,40 @@ describe("usdtToAtomic", () => {
   });
   it("throws on non-numeric input", () => {
     expect(() => usdtToAtomic("hello")).toThrow();
+  });
+});
+
+describe("decodeTrc20Transfer", () => {
+  // Real calldata from mainnet tx 0e9820e2cb225199... (5 USDT to TCLqmMcX...)
+  const REAL_CALLDATA =
+    "a9059cbb" +
+    "0000000000000000000000001a07acf3b87b54a37c2ef648a5c2a0db9e7fe7bc" +
+    "00000000000000000000000000000000000000000000000000000000004c4b40";
+
+  it("extracts recipient and amount from a real transfer", () => {
+    const r = decodeTrc20Transfer(REAL_CALLDATA);
+    expect(r).not.toBeNull();
+    // hex is prefixed with the TRON 0x41 network byte
+    expect(r!.toHex).toBe("411a07acf3b87b54a37c2ef648a5c2a0db9e7fe7bc");
+    expect(r!.rawAmount).toBe(5_000_000n);
+  });
+
+  it("decodes a multi-digit amount (120 USDT)", () => {
+    const calldata =
+      "a9059cbb" +
+      "0000000000000000000000001a07acf3b87b54a37c2ef648a5c2a0db9e7fe7bc" +
+      "0000000000000000000000000000000000000000000000000000000007270e00";
+    expect(decodeTrc20Transfer(calldata)!.rawAmount).toBe(120_000_000n);
+  });
+
+  it("returns null for a non-transfer selector", () => {
+    // approve(...) = 095ea7b3 — must not be treated as a payment
+    expect(decodeTrc20Transfer("095ea7b3" + "00".repeat(64))).toBeNull();
+  });
+
+  it("returns null for empty or malformed calldata", () => {
+    expect(decodeTrc20Transfer("")).toBeNull();
+    expect(decodeTrc20Transfer("a9059cbb")).toBeNull();
+    expect(decodeTrc20Transfer("a9059cbbdeadbeef")).toBeNull();
   });
 });

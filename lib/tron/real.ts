@@ -1,5 +1,5 @@
 import type { TronService } from "./types";
-import type { UsdtTransfer } from "./types";
+import type { UsdtTransfer, VerifyUsdtResult } from "./types";
 
 // USDT TRC20 contract address on TRON mainnet
 const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
@@ -16,6 +16,27 @@ function atomicToUsdt(atomicValue: string): string {
   const intPart = raw / 1_000_000n;
   const fracPart = raw % 1_000_000n;
   return `${intPart}.${String(fracPart).padStart(6, "0")}`;
+}
+
+/**
+ * Decode a TRC20 `transfer(address,uint256)` payload.
+ *
+ * Calldata layout: selector (4 bytes) | to (32 bytes, left-padded) | amount (32 bytes).
+ *
+ * Returns null when the calldata is not a plain TRC20 transfer, so callers can
+ * treat "not a transfer" and "transfer to the wrong party" the same way.
+ */
+export function decodeTrc20Transfer(data: string): { toHex: string; rawAmount: bigint } | null {
+  const hex = String(data ?? "");
+  if (!hex.startsWith("a9059cbb")) return null;
+  // 8 hex chars = 4-byte selector; address occupies the last 20 bytes of the next slot
+  const toHex = "41" + hex.slice(32, 72);
+  if (toHex.length !== 42) return null;
+  try {
+    return { toHex, rawAmount: BigInt("0x" + hex.slice(72, 136)) };
+  } catch {
+    return null;
+  }
 }
 
 export function parseUsdtTransfers(
@@ -169,41 +190,76 @@ export function createRealTron(opts: RealTronOpts): TronService {
       }
     },
 
-    async verifyUsdtTransfer(txHash: string, expectedTo: string): Promise<{
-      confirmed: boolean;
-      from: string;
-      to: string;
-      amountUsdt: string;
-    } | null> {
+    async verifyUsdtTransfer(txHash: string, expectedTo: string): Promise<VerifyUsdtResult> {
       try {
-        // Fetch specific tx from TronGrid trc20 endpoint
-        const res = await tronGet<{ data?: Array<Record<string, unknown>>; meta?: Record<string, unknown> }>(
-          `/v1/transactions/${txHash}?only_confirmed=true&limit=1`,
-        );
-        if (!res.data?.length) {
-          // The tx exists but not confirmed yet, or not found
-          return null;
+        // NOTE: the /v1/transactions/* REST endpoints return 404 with our API key
+        // (and rate-limit hard without one). The /wallet/* node endpoints work
+        // reliably, so decode the TRC20 transfer out of the raw contract data.
+        const tx = await tronPost<Record<string, unknown>>("/wallet/gettransactionbyid", {
+          value: txHash,
+        });
+        if (!tx || !tx.txID) {
+          return { ok: false, reason: "not_found", detail: "no transaction with this hash" };
         }
 
-        // Try /v1/transactions/ first — returns raw tx data
-        // For TRC20, we need the /v1/transactions/{hash} endpoint or /v1/transactions/trc20
-        const trc20Res = await tronGet<{ data?: Array<Record<string, unknown>> }>(
-          `/v1/transactions/trc20?transaction_id=${txHash}&only_confirmed=true&limit=1`,
-        );
-        if (!trc20Res.data?.length) return null;
+        // Must be confirmed (mined into a block)
+        const txInfo = await tronPost<Record<string, unknown>>("/wallet/gettransactioninfobyid", {
+          value: txHash,
+        });
+        if (!txInfo || !txInfo.blockNumber) {
+          return { ok: false, reason: "not_confirmed", detail: "transaction is not yet mined" };
+        }
+        const receipt = txInfo.receipt as Record<string, unknown> | undefined;
+        if (receipt && receipt.result && String(receipt.result) !== "SUCCESS") {
+          return { ok: false, reason: "not_found", detail: `receipt=${String(receipt.result)}` };
+        }
 
-        const tx = trc20Res.data[0] as Record<string, unknown>;
-        const to = String(tx.to ?? "");
-        if (to !== expectedTo) return null; // not sent to cold wallet
+        const rawData = tx.raw_data as Record<string, unknown> | undefined;
+        const contracts = rawData?.contract as Array<Record<string, unknown>> | undefined;
+        if (!contracts?.length) {
+          return { ok: false, reason: "not_usdt", detail: "transaction has no contract call" };
+        }
+
+        const contract = contracts[0] as Record<string, unknown>;
+        const param = contract.parameter as Record<string, unknown> | undefined;
+        const value = param?.value as Record<string, unknown> | undefined;
+        if (!value) {
+          return { ok: false, reason: "not_usdt", detail: "contract call has no parameters" };
+        }
+
+        // Must be a call to the USDT TRC20 contract
+        const contractAddrHex = String(value.contract_address ?? "");
+        const { getTronWeb } = await import("./tronweb-client");
+        const tw = getTronWeb(opts.apiKey);
+        let contractAddr = contractAddrHex;
+        try { contractAddr = tw.address.fromHex(contractAddrHex); } catch { /* keep hex */ }
+        if (contractAddr !== USDT_CONTRACT) {
+          return { ok: false, reason: "not_usdt", detail: `contract is ${contractAddr}, not USDT` };
+        }
+
+        // TRC20 transfer(address,uint256) — decode the calldata
+        const decoded = decodeTrc20Transfer(String(value.data ?? ""));
+        if (!decoded) {
+          return { ok: false, reason: "not_usdt", detail: "not a TRC20 transfer() call" };
+        }
+
+        let to = decoded.toHex;
+        try { to = tw.address.fromHex(decoded.toHex); } catch { /* keep hex */ }
+        if (to !== expectedTo) return { ok: false, reason: "wrong_address", detail: `sent to ${to}` };
+
+        // Sender address
+        let from = String(value.owner_address ?? "");
+        try { from = tw.address.fromHex(from); } catch { /* keep hex */ }
 
         return {
-          confirmed: true,
-          from: String(tx.from ?? ""),
+          ok: true,
+          from,
           to,
-          amountUsdt: atomicToUsdt(String(tx.value ?? "0")),
+          amountUsdt: atomicToUsdt(decoded.rawAmount.toString()),
         };
-      } catch {
-        return null;
+      } catch (err) {
+        // Network/HTTP failure — surface it instead of pretending the tx is absent
+        return { ok: false, reason: "rpc_error", detail: String(err) };
       }
     },
 

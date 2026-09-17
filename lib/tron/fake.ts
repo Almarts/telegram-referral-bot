@@ -30,7 +30,7 @@ export function createFakeTron(): TronService & { controls: FakeTronControls } {
     },
 
     async verifyUsdtTransfer(txHash: string, expectedTo: string) {
-      return null;
+      return { ok: false as const, reason: "not_found" as const, detail: "fake tron" };
     },
 
     async listUsdtTransfersTo(address: string, opts?: { sinceMs?: number; limit?: number }) {

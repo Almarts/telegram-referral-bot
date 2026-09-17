@@ -304,6 +304,14 @@ export async function handleTxid(ctx: Context): Promise<void> {
         await ctx.reply("⚠️ Мы нашли транзакцию, но сумма меньше требуемой. Пожалуйста, отправьте полную сумму.");
         break;
 
+      case "not_usdt":
+        await ctx.reply("❌ Эта транзакция не является переводом USDT (TRC20). Пришлите TXID перевода USDT.");
+        break;
+
+      case "rpc_error":
+        await ctx.reply("⏳ Не удалось проверить платёж — блокчейн временно недоступен. Подождите минуту и пришлите TXID снова.");
+        break;
+
       case "not_found":
         await ctx.reply("❌ Транзакция не найдена в блокчейне. Убедитесь, что вы указали правильный TXID, и попробуйте ещё раз.");
         break;
